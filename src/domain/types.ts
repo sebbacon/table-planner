@@ -1,6 +1,7 @@
 export type Gender = "M" | "F" | "Other" | "Unknown";
 
 export type PairConstraintType = "prefer_adjacent" | "avoid_adjacent";
+export type PairStrength = "high" | "medium" | "low";
 export type HeadSeatConstraintType = "prefer_head" | "avoid_head";
 export type ConstraintType = PairConstraintType | HeadSeatConstraintType;
 
@@ -15,6 +16,7 @@ export interface ConstraintPair {
   type: PairConstraintType;
   guestAId: string;
   guestBId: string;
+  strength?: PairStrength; // only meaningful for prefer_adjacent; absent/undefined = "medium"
 }
 
 export interface HeadSeatConstraint {

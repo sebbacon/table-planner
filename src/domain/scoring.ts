@@ -7,6 +7,7 @@ import type {
   HeadSeatConstraint,
   HeadSeatScoreResult,
   PairScoreResult,
+  PairStrength,
   Plan,
   ScoreBreakdown,
   SeatAssignments,
@@ -15,13 +16,17 @@ import type {
 } from "./types";
 import { isHeadSeatConstraint, isPairConstraint } from "./types";
 
-const PREFER_PROXIMITY_POINTS: Record<SeatProximity, number> = {
-  left_right: 48,
-  opposite: 32,
-  end: 18,
-  diagonal: 12,
-  none: 0
+const PREFER_PROXIMITY_POINTS: Record<PairStrength, Record<SeatProximity, number>> = {
+  high:   { left_right: 64, end: 64, opposite: 16, diagonal: 0,  none: 0 },
+  medium: { left_right: 48, end: 48, opposite: 32, diagonal: 12, none: 0 },
+  low:    { left_right: 24, end: 24, opposite: 18, diagonal: 12, none: 0 },
 };
+
+function isAdjacentForStrength(proximity: SeatProximity, strength: PairStrength): boolean {
+  if (strength === "high") return proximity === "left_right" || proximity === "end";
+  if (strength === "medium") return proximity !== "none" && proximity !== "diagonal";
+  return proximity !== "none"; // low: diagonal counts as satisfied
+}
 const AVOID_ADJACENT_PENALTY = -50;
 const AVOID_CLEAR_POINTS = 4;
 const PREFER_HEAD_POINTS = 36;
@@ -105,12 +110,13 @@ function scorePreferencePair(
   guestSeatIds: Map<string, number>
 ): PairScoreResult {
   const proximity = getGuestSeatProximity(pair, guestSeatIds);
+  const strength: PairStrength = pair.strength ?? "medium";
 
   return {
     pair,
-    adjacent: proximity !== "none",
+    adjacent: isAdjacentForStrength(proximity, strength),
     proximity,
-    points: PREFER_PROXIMITY_POINTS[proximity]
+    points: PREFER_PROXIMITY_POINTS[strength][proximity]
   };
 }
 

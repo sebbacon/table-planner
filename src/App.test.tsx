@@ -88,6 +88,42 @@ describe("App", () => {
     expect(screen.getByDisplayValue("Sam Jones")).toBeInTheDocument();
   });
 
+  it("persists pair strength selection in state and to localStorage", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem(
+      "table-planner-state-v1",
+      JSON.stringify({
+        guestText: "Jane Smith\nSam Jones",
+        constraints: [
+          {
+            id: "pair-1",
+            type: "prefer_adjacent",
+            guestAId: "guest-1-jane-smith",
+            guestBId: "guest-2-sam-jones"
+          }
+        ],
+        activePlan: null
+      })
+    );
+
+    render(<App />);
+    await screen.findByText("2 guests for 39 seats");
+
+    const highBtn = screen.getByRole("button", { name: "High" });
+    const medBtn = screen.getByRole("button", { name: "Med" });
+    expect(medBtn).toHaveClass("active");
+    expect(highBtn).not.toHaveClass("active");
+
+    await user.click(highBtn);
+    expect(highBtn).toHaveClass("active");
+    expect(medBtn).not.toHaveClass("active");
+
+    await waitFor(() => {
+      const saved = JSON.parse(localStorage.getItem("table-planner-state-v1") ?? "{}");
+      expect(saved.constraints[0].strength).toBe("high");
+    }, { timeout: 2000 });
+  });
+
   it("saves guest gender edits without requiring a seating plan or dropping pairings", async () => {
     const user = userEvent.setup();
     localStorage.setItem(
@@ -117,15 +153,16 @@ describe("App", () => {
         value: "Jane Smith, F\nSam Jones, M"
       }
     });
-    await user.click(within(screen.getByRole("banner")).getByRole("button", { name: /^save$/i }));
 
-    const saved = JSON.parse(localStorage.getItem("table-planner-state-v1") ?? "{}");
-    expect(saved.guestText).toBe("Jane Smith, F\nSam Jones, M");
-    expect(saved.constraints).toHaveLength(1);
-    expect(saved.constraints[0]).toMatchObject({
-      guestAId: "guest-1-jane-smith",
-      guestBId: "guest-2-sam-jones"
-    });
+    await waitFor(() => {
+      const saved = JSON.parse(localStorage.getItem("table-planner-state-v1") ?? "{}");
+      expect(saved.guestText).toBe("Jane Smith, F\nSam Jones, M");
+      expect(saved.constraints).toHaveLength(1);
+      expect(saved.constraints[0]).toMatchObject({
+        guestAId: "guest-1-jane-smith",
+        guestBId: "guest-2-sam-jones"
+      });
+    }, { timeout: 2000 });
   });
 
   it("highlights a seated guest when hovering a missed good-pair name", async () => {

@@ -1,10 +1,10 @@
-import type { Constraint, ConstraintType, Plan, SeatAssignments, SavedLayout } from "./types";
+import type { Constraint, ConstraintType, PairStrength, Plan, SeatAssignments, SavedLayout } from "./types";
 
 export interface PlannerData {
   guestText: string;
   constraints: Constraint[];
   activePlan: Plan | null;
-  savedLayouts: SavedLayout[];
+  savedLayouts?: SavedLayout[];
 }
 
 export interface PlannerBackup extends PlannerData {
@@ -80,17 +80,24 @@ function parseConstraint(value: unknown): Constraint {
   }
 
   if (type === "prefer_adjacent" || type === "avoid_adjacent") {
-    const { guestAId, guestBId } = value;
+    const { guestAId, guestBId, strength } = value;
 
     if (typeof guestAId !== "string" || typeof guestBId !== "string") {
       throw new Error("The data file contains an invalid constraint.");
     }
 
+    const validStrengths = new Set<string>(["high", "medium", "low"]);
+    const parsedStrength: PairStrength | undefined =
+      type === "prefer_adjacent" && typeof strength === "string" && validStrengths.has(strength)
+        ? (strength as PairStrength)
+        : undefined;
+
     return {
       id,
       type,
       guestAId,
-      guestBId
+      guestBId,
+      ...(parsedStrength !== undefined ? { strength: parsedStrength } : {})
     };
   }
 

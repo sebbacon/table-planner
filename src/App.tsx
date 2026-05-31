@@ -18,7 +18,7 @@ import {
   Upload,
   Users
 } from "lucide-react";
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { createPlannerBackup, parsePlannerBackupJson, type PlannerData } from "./domain/backup";
 import { readFileText } from "./domain/file";
 import { SEAT_IDS, SEATS } from "./domain/seating";
@@ -31,6 +31,7 @@ import {
   type Constraint,
   type HeadSeatConstraint,
   type PairConstraintType,
+  type PairStrength,
   type ConstraintPair,
   type Guest,
   type Plan,
@@ -57,10 +58,12 @@ export function App() {
   const [isGuestPanelCollapsed, setIsGuestPanelCollapsed] = useState(false);
   const [importWarnings, setImportWarnings] = useState<string[]>([]);
   const [importError, setImportError] = useState("");
-  const [saveStatus, setSaveStatus] = useState("Not saved");
+  const [saveStatus, setSaveStatus] = useState("");
   const [effortLevel, setEffortLevel] = useState(DEFAULT_EFFORT);
   const [isShuffling, setIsShuffling] = useState(false);
   const [savedLayouts, setSavedLayouts] = useState<SavedLayout[]>([]);
+  const [leftPanelWidth, setLeftPanelWidth] = useState(310);
+  const [isResizing, setIsResizing] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -75,9 +78,9 @@ export function App() {
       setConstraints(parsed.constraints ?? []);
       setActivePlan(parsed.activePlan ?? null);
       setSavedLayouts(parsed.savedLayouts ?? []);
-      setSaveStatus("Loaded saved plan");
+      setSaveStatus("Loaded");
     } catch {
-      setSaveStatus("Saved plan could not be loaded");
+      setSaveStatus("Could not load saved plan");
     }
   }, []);
 
@@ -88,6 +91,21 @@ export function App() {
     () => constraints.filter((constraint) => isValidConstraint(constraint, guestsById)),
     [constraints, guestsById]
   );
+
+  // Auto-save 600ms after the last change. The cleanup cancels any pending
+  // timer from a previous render, so rapid changes coalesce into one write.
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      const state: PlannerData = { guestText, constraints: validConstraints, activePlan, savedLayouts };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      setSaveStatus(`Saved ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
+    }, 600);
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [guestText, validConstraints, activePlan, savedLayouts]);
   const activeScore = useMemo(
     () => (activePlan ? scorePlan(activePlan, guests, validConstraints) : null),
     [activePlan, guests, validConstraints]
@@ -126,7 +144,7 @@ export function App() {
     });
     setCandidates(nextCandidates);
     setActivePlan(clonePlan(nextCandidates[0].plan));
-    setSaveStatus("Generated, not saved");
+    setSaveStatus("Generated");
     setIsShuffling(false);
   }
 
@@ -233,26 +251,37 @@ export function App() {
     }
   }
 
-  function handleSave() {
-    const state: PlannerData = {
-      guestText,
-      constraints: validConstraints,
-      activePlan,
-      savedLayouts
-    };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    setSaveStatus(`Saved ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
-  }
-
   function handlePrint() {
     window.print();
+  }
+
+  function startPanelResize(e: React.MouseEvent) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = leftPanelWidth;
+    setIsResizing(true);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    function onMouseMove(ev: MouseEvent) {
+      setLeftPanelWidth(Math.max(0, Math.min(600, startWidth + (ev.clientX - startX))));
+    }
+    function onMouseUp() {
+      setIsResizing(false);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    }
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
   }
 
   function handleResetPlan() {
     const nextPlan = createInitialPlan(guests.map((guest) => guest.id));
     setActivePlan(nextPlan);
     setCandidates([]);
-    setSaveStatus("Reset, not saved");
+    setSaveStatus("Plan reset");
   }
 
   function handleDropIntoSeat(seatId: number) {
@@ -263,7 +292,7 @@ export function App() {
 
     setActivePlan(moveGuestToSeat(activePlan, draggedGuestId, seatId));
     setDraggedGuestId(null);
-    setSaveStatus("Edited, not saved");
+    setSaveStatus("Plan edited");
   }
 
   function handleDropIntoHolding() {
@@ -274,7 +303,7 @@ export function App() {
 
     setActivePlan(moveGuestToHolding(activePlan, draggedGuestId));
     setDraggedGuestId(null);
-    setSaveStatus("Edited, not saved");
+    setSaveStatus("Plan edited");
   }
 
   const genderCounts = countGenders(guests);
@@ -309,10 +338,6 @@ export function App() {
             <RefreshCw size={18} />
             Reset
           </button>
-          <button type="button" onClick={handleSave} disabled={!hasSaveableData}>
-            <Save size={18} />
-            Save
-          </button>
           <button type="button" onClick={handleDataExport} disabled={!hasSaveableData}>
             <FileDown size={18} />
             Export Data
@@ -335,7 +360,19 @@ export function App() {
         </div>
       </header>
 
-      <main className="workspace">
+      <main className="workspace" style={{ "--left-panel-width": `${leftPanelWidth}px` } as React.CSSProperties}>
+        <div
+          className={`panel-resize-handle${isResizing ? " resizing" : ""}`}
+          style={{ left: `calc(1.5rem + ${leftPanelWidth}px)` }}
+          onMouseDown={startPanelResize}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize guest panel"
+        >
+          <div className="panel-resize-pill">
+            <GripVertical size={12} />
+          </div>
+        </div>
         <aside className="input-panel">
           <section className="panel-section">
             <div className="section-heading">
@@ -410,6 +447,7 @@ export function App() {
           <PairEditor
             title="Good Adjacent"
             type="prefer_adjacent"
+            showStrength
             guests={guests}
             constraints={constraints}
             onChange={(nextConstraints) => {
@@ -492,7 +530,7 @@ export function App() {
             activePlan={activePlan}
             onSelect={(plan) => {
               setActivePlan(clonePlan(plan));
-              setSaveStatus("Candidate selected, not saved");
+              setSaveStatus("Candidate selected");
             }}
           />
           <LibraryPanel
@@ -567,15 +605,18 @@ function GuestList({
   );
 }
 
+const STRENGTH_LABELS: Record<PairStrength, string> = { high: "High", medium: "Med", low: "Low" };
+
 interface PairEditorProps {
   title: string;
   type: PairConstraintType;
   guests: Guest[];
   constraints: Constraint[];
+  showStrength?: boolean;
   onChange: (constraints: Constraint[]) => void;
 }
 
-function PairEditor({ title, type, guests, constraints, onChange }: PairEditorProps) {
+function PairEditor({ title, type, guests, constraints, showStrength, onChange }: PairEditorProps) {
   const pairs = constraints.filter(
     (constraint): constraint is ConstraintPair => isPairConstraint(constraint) && constraint.type === type
   );
@@ -591,12 +632,13 @@ function PairEditor({ title, type, guests, constraints, onChange }: PairEditorPr
         id: `${type}-${crypto.randomUUID()}`,
         type,
         guestAId: guests[0].id,
-        guestBId: guests[1].id
+        guestBId: guests[1].id,
+        ...(showStrength ? { strength: "medium" as PairStrength } : {})
       }
     ]);
   }
 
-  function updatePair(pairId: string, field: "guestAId" | "guestBId", value: string) {
+  function updatePair(pairId: string, field: "guestAId" | "guestBId" | "strength", value: string) {
     onChange(
       constraints.map((constraint) =>
         isPairConstraint(constraint) && constraint.id === pairId ? { ...constraint, [field]: value } : constraint
@@ -626,8 +668,9 @@ function PairEditor({ title, type, guests, constraints, onChange }: PairEditorPr
               ((c.guestAId === pair.guestAId && c.guestBId === pair.guestBId) ||
                (c.guestAId === pair.guestBId && c.guestBId === pair.guestAId))
           );
+          const strength: PairStrength = pair.strength ?? "medium";
           return (
-            <div className="pair-row" key={pair.id}>
+            <div className={`pair-row${showStrength ? " has-strength" : ""}`} key={pair.id}>
               <select value={pair.guestAId} onChange={(event) => updatePair(pair.id, "guestAId", event.target.value)}>
                 {guests.map((guest) => (
                   <option value={guest.id} key={guest.id}>{guest.name}</option>
@@ -638,8 +681,23 @@ function PairEditor({ title, type, guests, constraints, onChange }: PairEditorPr
                   <option value={guest.id} key={guest.id}>{guest.name}</option>
                 ))}
               </select>
+              {showStrength && (
+                <div className="strength-toggle" role="group" aria-label="Pair strength">
+                  {(["high", "medium", "low"] as PairStrength[]).map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      className={`strength-btn${strength === s ? " active" : ""}`}
+                      onClick={() => updatePair(pair.id, "strength", s)}
+                      title={s === "high" ? "Direct neighbours only" : s === "medium" ? "Direct or opposite" : "Any adjacency"}
+                    >
+                      {STRENGTH_LABELS[s]}
+                    </button>
+                  ))}
+                </div>
+              )}
               {conflict
-                ? <AlertTriangle size={15} className="conflict-icon" title="This pair also appears in the opposite constraint list" />
+                ? <span title="This pair also appears in the opposite constraint list"><AlertTriangle size={15} className="conflict-icon" /></span>
                 : <span />}
               <button type="button" className="icon-button danger" onClick={() => removePair(pair.id)} aria-label="Remove pair">
                 <Trash2 size={16} />

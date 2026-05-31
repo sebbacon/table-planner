@@ -146,8 +146,9 @@ p {
 .workspace {
   display: grid;
   gap: 1rem;
-  grid-template-columns: minmax(270px, 330px) minmax(520px, 1fr) minmax(260px, 320px);
+  grid-template-columns: var(--left-panel-width, 310px) minmax(520px, 1fr) minmax(260px, 320px);
   padding: 1rem;
+  position: relative;
 }
 
 .input-panel,
@@ -155,6 +156,11 @@ p {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+
+.input-panel {
+  min-width: 0;
+  overflow: hidden;
 }
 
 .panel-section,
@@ -323,6 +329,40 @@ p {
   display: grid;
   gap: 0.45rem;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 1.25rem auto;
+}
+
+.pair-row.has-strength {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto 1.25rem auto;
+}
+
+.strength-toggle {
+  display: flex;
+}
+
+.strength-btn {
+  border-radius: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  min-height: 1.9rem;
+  padding: 0.2rem 0.42rem;
+}
+
+.strength-btn:first-child {
+  border-radius: 5px 0 0 5px;
+}
+
+.strength-btn:last-child {
+  border-radius: 0 5px 5px 0;
+}
+
+.strength-btn + .strength-btn {
+  border-left: 0;
+}
+
+.strength-btn.active {
+  background: #24313d;
+  border-color: #24313d;
+  color: #ffffff;
 }
 
 .head-row {
@@ -697,6 +737,53 @@ p {
   box-shadow: inset 0 0 0 1px #0f766e;
 }
 
+.panel-resize-handle {
+  align-items: center;
+  bottom: 1rem;
+  cursor: col-resize;
+  display: flex;
+  justify-content: center;
+  position: absolute;
+  top: 1rem;
+  transform: translateX(-50%);
+  width: 16px;
+  z-index: 10;
+}
+
+.panel-resize-handle::before {
+  background: #d9ddd6;
+  bottom: 0;
+  content: '';
+  left: 50%;
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  width: 1px;
+}
+
+.panel-resize-pill {
+  align-items: center;
+  background: #eef1ee;
+  border: 1px solid #c8ced3;
+  border-radius: 999px;
+  color: #8a9aa4;
+  display: flex;
+  height: 48px;
+  justify-content: center;
+  position: relative;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  width: 16px;
+  z-index: 1;
+}
+
+.panel-resize-handle:hover .panel-resize-pill,
+.panel-resize-handle.resizing .panel-resize-pill {
+  background: #24313d;
+  border-color: #24313d;
+  color: #ffffff;
+}
+
 @media (max-width: 1180px) {
   .workspace {
     grid-template-columns: 320px minmax(0, 1fr);
@@ -704,6 +791,10 @@ p {
 
   .results-panel {
     grid-column: 1 / -1;
+  }
+
+  .panel-resize-handle {
+    display: none;
   }
 }
 
