@@ -1,4 +1,4 @@
-import { HEAD_SEAT_IDS, SEAT_IDS, getSeatProximity, isHeadSeat } from "./seating";
+import { HEAD_SEAT_IDS, SEAT_IDS, getSeatIdsForTable, getSeatProximity, isHeadSeat } from "./seating";
 import { createEmptyAssignments, getGuestSeatIds, scorePlan } from "./scoring";
 import { isHeadSeatConstraint, isPairConstraint } from "./types";
 import type { Constraint, ConstraintPair, Guest, Plan, ScoreBreakdown, SeatAssignments } from "./types";
@@ -50,7 +50,7 @@ export function generatePlans({
   );
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const plan = createRandomPlan(guestIds, preferHeadIds, avoidHeadIds, rng, `candidate-${attempt}`);
+    const plan = createRandomPlan(guestIds, preferHeadIds, avoidHeadIds, preferPairs, rng, `candidate-${attempt}`);
     improvePlan(plan, guests, constraints, preferHeadIds, avoidHeadIds, preferPairs, improveIterations, rng);
     const signature = getPlanSignature(plan);
 
@@ -72,54 +72,119 @@ function createRandomPlan(
   guestIds: string[],
   preferHeadIds: Set<string>,
   avoidHeadIds: Set<string>,
+  preferPairs: ConstraintPair[],
   rng: () => number,
   id: string
 ): Plan {
   const assignments = createEmptyAssignments();
 
-  const headSeats = shuffle([...HEAD_SEAT_IDS], rng);
-  const nonHeadSeats = shuffle(
-    SEAT_IDS.filter((seatId) => !HEAD_SEAT_IDS.includes(seatId)),
-    rng
+  const table1SeatIds = getSeatIdsForTable(1);
+  const table2SeatIds = getSeatIdsForTable(2);
+  const totalSeats = table1SeatIds.length + table2SeatIds.length;
+  const n = Math.min(guestIds.length, totalSeats);
+  const t1Cap = Math.min(table1SeatIds.length, Math.ceil(n / 2));
+  const t2Cap = Math.min(table2SeatIds.length, n - t1Cap);
+
+  const { table1Guests, table2Guests } = partitionGuestsByTable(
+    guestIds.slice(0, n), preferPairs, t1Cap, t2Cap, rng
   );
 
-  const preferHeadGuests = shuffle(guestIds.filter((id) => preferHeadIds.has(id)), rng);
-  const avoidHeadGuests = shuffle(guestIds.filter((id) => avoidHeadIds.has(id)), rng);
-  const freeGuests = shuffle(guestIds.filter((id) => !preferHeadIds.has(id) && !avoidHeadIds.has(id)), rng);
+  assignToTable(table1Guests, table1SeatIds, preferHeadIds, avoidHeadIds, assignments, rng);
+  assignToTable(table2Guests, table2SeatIds, preferHeadIds, avoidHeadIds, assignments, rng);
 
-  const headQueue = [...headSeats];
-  const nonHeadQueue = [...nonHeadSeats];
-  const holdingGuestIds: string[] = [];
+  return { id, assignments, holdingGuestIds: guestIds.slice(n) };
+}
 
-  for (const guestId of preferHeadGuests) {
+function partitionGuestsByTable(
+  guestIds: string[],
+  preferPairs: ConstraintPair[],
+  t1Cap: number,
+  t2Cap: number,
+  rng: () => number
+): { table1Guests: string[]; table2Guests: string[] } {
+  const guestSet = new Set(guestIds);
+  const tableOf = new Map<string, 1 | 2>();
+  let t1Count = 0;
+  let t2Count = 0;
+
+  function tryAssign(guestId: string, table: 1 | 2): boolean {
+    if (!guestSet.has(guestId)) return false;
+    if (tableOf.has(guestId)) return tableOf.get(guestId) === table;
+    const cap = table === 1 ? t1Cap : t2Cap;
+    const count = table === 1 ? t1Count : t2Count;
+    if (count >= cap) return false;
+    tableOf.set(guestId, table);
+    if (table === 1) t1Count += 1; else t2Count += 1;
+    return true;
+  }
+
+  const strengthWeight: Record<string, number> = { high: 3, medium: 2, low: 1 };
+  const sortedPairs = [...preferPairs].sort(
+    (a, b) => (strengthWeight[b.strength ?? "medium"] ?? 2) - (strengthWeight[a.strength ?? "medium"] ?? 2)
+  );
+
+  for (const pair of sortedPairs) {
+    const aTable = tableOf.get(pair.guestAId);
+    const bTable = tableOf.get(pair.guestBId);
+
+    if (aTable !== undefined && bTable !== undefined) continue;
+
+    if (aTable !== undefined) {
+      tryAssign(pair.guestBId, aTable);
+    } else if (bTable !== undefined) {
+      tryAssign(pair.guestAId, bTable);
+    } else {
+      const preferred: 1 | 2 = t1Count <= t2Count ? 1 : 2;
+      const fallback: 1 | 2 = preferred === 1 ? 2 : 1;
+      if (!tryAssign(pair.guestAId, preferred)) tryAssign(pair.guestAId, fallback);
+      const aFinal = tableOf.get(pair.guestAId);
+      if (aFinal !== undefined) {
+        if (!tryAssign(pair.guestBId, aFinal)) tryAssign(pair.guestBId, aFinal === 1 ? 2 : 1);
+      }
+    }
+  }
+
+  for (const guestId of shuffle(guestIds.filter(id => !tableOf.has(id)), rng)) {
+    if (t1Count < t1Cap) tryAssign(guestId, 1);
+    else tryAssign(guestId, 2);
+  }
+
+  return {
+    table1Guests: guestIds.filter(id => tableOf.get(id) === 1),
+    table2Guests: guestIds.filter(id => tableOf.get(id) === 2)
+  };
+}
+
+function assignToTable(
+  guestIds: string[],
+  tableSeatIds: number[],
+  preferHeadIds: Set<string>,
+  avoidHeadIds: Set<string>,
+  assignments: SeatAssignments,
+  rng: () => number
+): void {
+  const headQueue = shuffle(tableSeatIds.filter(id => HEAD_SEAT_IDS.includes(id)), rng);
+  const nonHeadQueue = shuffle(tableSeatIds.filter(id => !HEAD_SEAT_IDS.includes(id)), rng);
+
+  const preferHead = shuffle(guestIds.filter(id => preferHeadIds.has(id)), rng);
+  const avoidHead = shuffle(guestIds.filter(id => avoidHeadIds.has(id)), rng);
+  const free = shuffle(guestIds.filter(id => !preferHeadIds.has(id) && !avoidHeadIds.has(id)), rng);
+
+  for (const guestId of preferHead) {
     const seat = headQueue.shift() ?? nonHeadQueue.shift();
-    if (seat !== undefined) {
-      assignments[seat] = guestId;
-    } else {
-      holdingGuestIds.push(guestId);
-    }
+    if (seat !== undefined) assignments[seat] = guestId;
   }
 
-  for (const guestId of avoidHeadGuests) {
+  for (const guestId of avoidHead) {
     const seat = nonHeadQueue.shift() ?? headQueue.shift();
-    if (seat !== undefined) {
-      assignments[seat] = guestId;
-    } else {
-      holdingGuestIds.push(guestId);
-    }
+    if (seat !== undefined) assignments[seat] = guestId;
   }
 
-  const remainingSeats = [...headQueue, ...nonHeadQueue];
-  for (const guestId of freeGuests) {
-    const seat = remainingSeats.shift();
-    if (seat !== undefined) {
-      assignments[seat] = guestId;
-    } else {
-      holdingGuestIds.push(guestId);
-    }
+  const remaining = [...headQueue, ...nonHeadQueue];
+  for (const guestId of free) {
+    const seat = remaining.shift();
+    if (seat !== undefined) assignments[seat] = guestId;
   }
-
-  return { id, assignments, holdingGuestIds };
 }
 
 function improvePlan(
