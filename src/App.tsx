@@ -1,10 +1,13 @@
 import {
+  AlertTriangle,
+  Bookmark,
   ChevronDown,
   ChevronUp,
   Download,
   FileDown,
   FileUp,
   GripVertical,
+  Loader,
   Pencil,
   Plus,
   Printer,
@@ -20,7 +23,7 @@ import { createPlannerBackup, parsePlannerBackupJson, type PlannerData } from ".
 import { readFileText } from "./domain/file";
 import { SEAT_IDS, SEATS } from "./domain/seating";
 import { createInitialPlan, scorePlan } from "./domain/scoring";
-import { generatePlans, type ScoredPlan } from "./domain/solver";
+import { DEFAULT_EFFORT, EFFORT_LEVELS, generatePlans, type ScoredPlan } from "./domain/solver";
 import { spreadsheetFileToGuestText } from "./domain/spreadsheet";
 import {
   isHeadSeatConstraint,
@@ -31,6 +34,7 @@ import {
   type ConstraintPair,
   type Guest,
   type Plan,
+  type SavedLayout,
   type ScoreBreakdown
 } from "./domain/types";
 import { parseGuestText } from "./domain/parser";
@@ -54,6 +58,9 @@ export function App() {
   const [importWarnings, setImportWarnings] = useState<string[]>([]);
   const [importError, setImportError] = useState("");
   const [saveStatus, setSaveStatus] = useState("Not saved");
+  const [effortLevel, setEffortLevel] = useState(DEFAULT_EFFORT);
+  const [isShuffling, setIsShuffling] = useState(false);
+  const [savedLayouts, setSavedLayouts] = useState<SavedLayout[]>([]);
 
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -67,6 +74,7 @@ export function App() {
       setGuestText(parsed.guestText ?? "");
       setConstraints(parsed.constraints ?? []);
       setActivePlan(parsed.activePlan ?? null);
+      setSavedLayouts(parsed.savedLayouts ?? []);
       setSaveStatus("Loaded saved plan");
     } catch {
       setSaveStatus("Saved plan could not be loaded");
@@ -97,21 +105,29 @@ export function App() {
   );
   const holdingGuestIds = [...(activePlan?.holdingGuestIds ?? []), ...unplacedGuests.map((guest) => guest.id)];
 
-  function handleShuffle() {
+  async function handleShuffle() {
     if (guests.length === 0) {
       setCandidates([]);
       setActivePlan(null);
       return;
     }
 
+    setIsShuffling(true);
+    // Yield two frames so React can commit the spinner before the blocking computation
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+
+    const { attempts, improveIterations } = EFFORT_LEVELS[effortLevel - 1];
     const nextCandidates = generatePlans({
       guests,
       constraints: validConstraints,
-      count: 6
+      count: 6,
+      attempts,
+      improveIterations
     });
     setCandidates(nextCandidates);
     setActivePlan(clonePlan(nextCandidates[0].plan));
     setSaveStatus("Generated, not saved");
+    setIsShuffling(false);
   }
 
   function handleGuestTextChange(nextGuestText: string, options: { resetDerivedState?: boolean } = {}) {
@@ -149,6 +165,7 @@ export function App() {
       const result = await spreadsheetFileToGuestText(file);
       handleGuestTextChange(result.guestText, { resetDerivedState: true });
       setImportWarnings(result.warnings);
+      setIsEditingGuests(true);
       setSaveStatus(`Imported ${result.importedCount} guest${result.importedCount === 1 ? "" : "s"}`);
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "The spreadsheet could not be imported.");
@@ -156,11 +173,26 @@ export function App() {
     }
   }
 
+  function handleSaveToLibrary() {
+    if (!activePlan) return;
+    const now = new Date();
+    const name =
+      now.toLocaleDateString("en-GB", { day: "numeric", month: "short" }) +
+      " " +
+      now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    setSavedLayouts((prev) => [
+      { id: crypto.randomUUID(), name, savedAt: now.toISOString(), plan: clonePlan(activePlan), scoreTotal: activeScore?.total ?? 0 },
+      ...prev
+    ]);
+    setSaveStatus("Saved to library");
+  }
+
   function handleDataExport() {
     const backup = createPlannerBackup({
       guestText,
       constraints,
-      activePlan
+      activePlan,
+      savedLayouts
     });
     const blob = new Blob([JSON.stringify(backup, null, 2)], {
       type: "application/json"
@@ -192,6 +224,8 @@ export function App() {
       setCandidates([]);
       setImportWarnings([]);
       setImportError("");
+      setSavedLayouts(imported.savedLayouts ?? []);
+      setIsEditingGuests(true);
       setSaveStatus(`Imported data with ${imported.constraints.length} constraint${imported.constraints.length === 1 ? "" : "s"}`);
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "The data file could not be imported.");
@@ -203,7 +237,8 @@ export function App() {
     const state: PlannerData = {
       guestText,
       constraints: validConstraints,
-      activePlan
+      activePlan,
+      savedLayouts
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     setSaveStatus(`Saved ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
@@ -244,7 +279,7 @@ export function App() {
 
   const genderCounts = countGenders(guests);
   const hasTooManyGuests = guests.length > SEAT_IDS.length;
-  const hasSaveableData = Boolean(guestText.trim() || constraints.length > 0 || activePlan);
+  const hasSaveableData = Boolean(guestText.trim() || constraints.length > 0 || activePlan || savedLayouts.length > 0);
 
   return (
     <div className="app-shell">
@@ -254,9 +289,21 @@ export function App() {
           <p>{guests.length} guests for {SEAT_IDS.length} seats</p>
         </div>
         <div className="top-actions">
-          <button className="primary-button" type="button" onClick={handleShuffle} disabled={guests.length === 0}>
-            <Shuffle size={18} />
-            Shuffle
+          <label className="effort-control">
+            <span>Effort</span>
+            <input
+              type="range"
+              className="effort-slider"
+              min={1}
+              max={EFFORT_LEVELS.length}
+              value={effortLevel}
+              onChange={(e) => setEffortLevel(Number(e.target.value))}
+            />
+            <span className="effort-value">{effortLevel}</span>
+          </label>
+          <button className="primary-button" type="button" onClick={handleShuffle} disabled={guests.length === 0 || isShuffling}>
+            {isShuffling ? <Loader size={18} className="spinning" /> : <Shuffle size={18} />}
+            {isShuffling ? "Shuffling…" : "Shuffle"}
           </button>
           <button type="button" onClick={handleResetPlan} disabled={guests.length === 0}>
             <RefreshCw size={18} />
@@ -294,19 +341,19 @@ export function App() {
             <div className="section-heading">
               <h2>Guests</h2>
               <div className="guest-actions">
+                <label className="file-upload-button icon-text-button">
+                  <Upload size={16} />
+                  Upload
+                  <input
+                    aria-label="Upload spreadsheet"
+                    className="visually-hidden"
+                    type="file"
+                    accept=".xlsx,.csv,.tsv,text/csv,text/tab-separated-values,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    onChange={handleSpreadsheetUpload}
+                  />
+                </label>
                 {!isGuestPanelCollapsed && (isEditingGuests ? (
                   <>
-                    <label className="file-upload-button icon-text-button">
-                      <Upload size={16} />
-                      Upload
-                      <input
-                        aria-label="Upload spreadsheet"
-                        className="visually-hidden"
-                        type="file"
-                        accept=".xlsx,.csv,.tsv,text/csv,text/tab-separated-values,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        onChange={handleSpreadsheetUpload}
-                      />
-                    </label>
                     <button type="button" className="icon-text-button" onClick={() => handleGuestTextChange(PLACEHOLDER_GUESTS, { resetDerivedState: true })}>
                       <Download size={16} />
                       Fill
@@ -338,7 +385,7 @@ export function App() {
                     placeholder={"Jane Smith, F\nSam Jones, M\nAlex Lee, Other\nPat Morgan"}
                   />
                 ) : (
-                  <GuestList guests={guests} onGuestHighlight={setHighlightedGuestId} />
+                  <GuestList guests={guests} constraints={validConstraints} onGuestHighlight={setHighlightedGuestId} />
                 )}
                 <div className="guest-meta">
                   <span>{genderCounts.male} M</span>
@@ -398,7 +445,15 @@ export function App() {
               <h2>Layout</h2>
               <p>{saveStatus}</p>
             </div>
-            {activeScore ? <ScorePill score={activeScore.total} /> : null}
+            <div className="surface-toolbar-right">
+              {activePlan && (
+                <button type="button" className="icon-text-button" onClick={handleSaveToLibrary}>
+                  <Bookmark size={15} />
+                  Save to library
+                </button>
+              )}
+              {activeScore ? <ScorePill score={activeScore.total} /> : null}
+            </div>
           </div>
 
           {activePlan ? (
@@ -440,6 +495,16 @@ export function App() {
               setSaveStatus("Candidate selected, not saved");
             }}
           />
+          <LibraryPanel
+            savedLayouts={savedLayouts}
+            activePlanId={activePlan?.id ?? null}
+            onLoad={(plan) => {
+              setActivePlan(clonePlan(plan));
+              setSaveStatus("Loaded from library");
+            }}
+            onDelete={(id) => setSavedLayouts((prev) => prev.filter((l) => l.id !== id))}
+            onRename={(id, name) => setSavedLayouts((prev) => prev.map((l) => l.id === id ? { ...l, name } : l))}
+          />
         </aside>
       </main>
     </div>
@@ -448,32 +513,56 @@ export function App() {
 
 function GuestList({
   guests,
+  constraints,
   onGuestHighlight
 }: {
   guests: Guest[];
+  constraints: Constraint[];
   onGuestHighlight: (guestId: string | null) => void;
 }) {
   if (guests.length === 0) {
     return <p className="muted-text">No guests yet. Click Edit to add guests.</p>;
   }
 
+  const counts = new Map<string, number>();
+  for (const c of constraints) {
+    if (isPairConstraint(c)) {
+      counts.set(c.guestAId, (counts.get(c.guestAId) ?? 0) + 1);
+      counts.set(c.guestBId, (counts.get(c.guestBId) ?? 0) + 1);
+    } else if (isHeadSeatConstraint(c)) {
+      counts.set(c.guestId, (counts.get(c.guestId) ?? 0) + 1);
+    }
+  }
+
   const sorted = [...guests].sort((a, b) => a.name.localeCompare(b.name));
 
   return (
     <div className="guest-list-view">
-      {sorted.map((guest) => (
-        <button
-          key={guest.id}
-          className="guest-list-name"
-          type="button"
-          onMouseEnter={() => onGuestHighlight(guest.id)}
-          onMouseLeave={() => onGuestHighlight(null)}
-          onFocus={() => onGuestHighlight(guest.id)}
-          onBlur={() => onGuestHighlight(null)}
-        >
-          {guest.name}
-        </button>
-      ))}
+      {sorted.map((guest) => {
+        const count = counts.get(guest.id) ?? 0;
+        const badgeTone = count >= 3 ? "high" : count === 2 ? "mid" : "low";
+        return (
+          <button
+            key={guest.id}
+            className="guest-list-name"
+            type="button"
+            onMouseEnter={() => onGuestHighlight(guest.id)}
+            onMouseLeave={() => onGuestHighlight(null)}
+            onFocus={() => onGuestHighlight(guest.id)}
+            onBlur={() => onGuestHighlight(null)}
+          >
+            <span>{guest.name}</span>
+            {count > 0 && (
+              <span
+                className={`constraint-badge constraint-badge-${badgeTone}`}
+                title={`${count} constraint${count === 1 ? "" : "s"}`}
+              >
+                {count}
+              </span>
+            )}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -529,23 +618,35 @@ function PairEditor({ title, type, guests, constraints, onChange }: PairEditorPr
       </div>
       <div className="pair-list">
         {pairs.length === 0 ? <p className="muted-text">No pairs yet.</p> : null}
-        {pairs.map((pair) => (
-          <div className="pair-row" key={pair.id}>
-            <select value={pair.guestAId} onChange={(event) => updatePair(pair.id, "guestAId", event.target.value)}>
-              {guests.map((guest) => (
-                <option value={guest.id} key={guest.id}>{guest.name}</option>
-              ))}
-            </select>
-            <select value={pair.guestBId} onChange={(event) => updatePair(pair.id, "guestBId", event.target.value)}>
-              {guests.map((guest) => (
-                <option value={guest.id} key={guest.id}>{guest.name}</option>
-              ))}
-            </select>
-            <button type="button" className="icon-button danger" onClick={() => removePair(pair.id)} aria-label="Remove pair">
-              <Trash2 size={16} />
-            </button>
-          </div>
-        ))}
+        {pairs.map((pair) => {
+          const conflict = constraints.some(
+            (c) =>
+              isPairConstraint(c) &&
+              c.type !== type &&
+              ((c.guestAId === pair.guestAId && c.guestBId === pair.guestBId) ||
+               (c.guestAId === pair.guestBId && c.guestBId === pair.guestAId))
+          );
+          return (
+            <div className="pair-row" key={pair.id}>
+              <select value={pair.guestAId} onChange={(event) => updatePair(pair.id, "guestAId", event.target.value)}>
+                {guests.map((guest) => (
+                  <option value={guest.id} key={guest.id}>{guest.name}</option>
+                ))}
+              </select>
+              <select value={pair.guestBId} onChange={(event) => updatePair(pair.id, "guestBId", event.target.value)}>
+                {guests.map((guest) => (
+                  <option value={guest.id} key={guest.id}>{guest.name}</option>
+                ))}
+              </select>
+              {conflict
+                ? <AlertTriangle size={15} className="conflict-icon" title="This pair also appears in the opposite constraint list" />
+                : <span />}
+              <button type="button" className="icon-button danger" onClick={() => removePair(pair.id)} aria-label="Remove pair">
+                <Trash2 size={16} />
+              </button>
+            </div>
+          );
+        })}
       </div>
     </section>
   );
@@ -930,6 +1031,93 @@ function CandidateList({
             <span>Option {index + 1}</span>
             <strong>{candidate.score.total}</strong>
           </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function LibraryPanel({
+  savedLayouts,
+  activePlanId,
+  onLoad,
+  onDelete,
+  onRename
+}: {
+  savedLayouts: SavedLayout[];
+  activePlanId: string | null;
+  onLoad: (plan: Plan) => void;
+  onDelete: (id: string) => void;
+  onRename: (id: string, name: string) => void;
+}) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState("");
+
+  function startEditing(layout: SavedLayout) {
+    setEditingId(layout.id);
+    setEditingName(layout.name);
+  }
+
+  function commitEdit() {
+    if (editingId && editingName.trim()) {
+      onRename(editingId, editingName.trim());
+    }
+    setEditingId(null);
+  }
+
+  return (
+    <section className="panel-section">
+      <h2>Library</h2>
+      <div className="library-list">
+        {savedLayouts.length === 0
+          ? <p className="muted-text">Save a layout to build up options to compare.</p>
+          : null}
+        {savedLayouts.map((layout) => (
+          <div className={`library-entry${layout.plan.id === activePlanId ? " active" : ""}`} key={layout.id}>
+            <div className="library-entry-info">
+              {editingId === layout.id ? (
+                <input
+                  className="library-name-input"
+                  value={editingName}
+                  autoFocus
+                  onChange={(e) => setEditingName(e.target.value)}
+                  onBlur={commitEdit}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") commitEdit();
+                    if (e.key === "Escape") setEditingId(null);
+                  }}
+                />
+              ) : (
+                <button
+                  className="library-name"
+                  type="button"
+                  title="Click to rename"
+                  onClick={() => startEditing(layout)}
+                >
+                  {layout.name}
+                </button>
+              )}
+              <span className="library-score">{layout.scoreTotal}</span>
+            </div>
+            <div className="library-entry-actions">
+              <button
+                type="button"
+                className="icon-text-button"
+                onClick={() => onLoad(layout.plan)}
+                disabled={layout.plan.id === activePlanId}
+              >
+                Load
+              </button>
+              <button
+                type="button"
+                className="icon-button danger"
+                onClick={() => onDelete(layout.id)}
+                aria-label="Delete saved layout"
+              >
+                <Trash2 size={15} />
+              </button>
+            </div>
+          </div>
         ))}
       </div>
     </section>

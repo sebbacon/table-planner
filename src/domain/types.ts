@@ -79,6 +79,14 @@ export interface ScoreBreakdown {
   sameGenderAdjacentPairs: number;
 }
 
+export interface SavedLayout {
+  id: string;
+  name: string;
+  savedAt: string;
+  plan: Plan;
+  scoreTotal: number;
+}
+
 export function isPairConstraint(constraint: Constraint): constraint is ConstraintPair {
   return constraint.type === "prefer_adjacent" || constraint.type === "avoid_adjacent";
 }

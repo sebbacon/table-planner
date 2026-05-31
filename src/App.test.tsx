@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import "@testing-library/jest-dom/vitest";
@@ -14,7 +14,8 @@ describe("App", () => {
 
     render(<App />);
 
-    await user.click(screen.getByRole("button", { name: /fill placeholders/i }));
+    await user.click(screen.getByRole("button", { name: /^edit$/i }));
+    await user.click(screen.getByRole("button", { name: /fill/i }));
     await user.click(screen.getByRole("button", { name: /reset/i }));
 
     expect(screen.getByText("39 guests for 39 seats")).toBeInTheDocument();
@@ -27,6 +28,7 @@ describe("App", () => {
 
     render(<App />);
 
+    await user.click(screen.getByRole("button", { name: /^edit$/i }));
     await user.type(screen.getByLabelText("Guest list"), "Jane Smith, F\nSam Jones, M");
     await user.click(screen.getByRole("button", { name: /reset/i }));
 
@@ -107,6 +109,7 @@ describe("App", () => {
     render(<App />);
 
     await screen.findByText("2 guests for 39 seats");
+    await user.click(screen.getByRole("button", { name: /^edit$/i }));
     const guestInput = screen.getByLabelText("Guest list");
     await waitFor(() => expect(guestInput).toHaveValue("Jane Smith\nSam Jones"));
     fireEvent.change(guestInput, {
@@ -114,7 +117,7 @@ describe("App", () => {
         value: "Jane Smith, F\nSam Jones, M"
       }
     });
-    await user.click(screen.getByRole("button", { name: /^save$/i }));
+    await user.click(within(screen.getByRole("banner")).getByRole("button", { name: /^save$/i }));
 
     const saved = JSON.parse(localStorage.getItem("table-planner-state-v1") ?? "{}");
     expect(saved.guestText).toBe("Jane Smith, F\nSam Jones, M");

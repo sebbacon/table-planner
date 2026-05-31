@@ -1,9 +1,10 @@
-import type { Constraint, ConstraintType, Plan, SeatAssignments } from "./types";
+import type { Constraint, ConstraintType, Plan, SeatAssignments, SavedLayout } from "./types";
 
 export interface PlannerData {
   guestText: string;
   constraints: Constraint[];
   activePlan: Plan | null;
+  savedLayouts: SavedLayout[];
 }
 
 export interface PlannerBackup extends PlannerData {
@@ -27,7 +28,8 @@ export function createPlannerBackup(
     exportedAt,
     guestText: data.guestText,
     constraints: data.constraints,
-    activePlan: data.activePlan
+    activePlan: data.activePlan,
+    savedLayouts: data.savedLayouts
   };
 }
 
@@ -55,7 +57,10 @@ export function parsePlannerBackupJson(input: string): PlannerData {
   return {
     guestText: parsed.guestText,
     constraints: parsed.constraints.map(parseConstraint),
-    activePlan: parsed.activePlan === null ? null : parsePlan(parsed.activePlan)
+    activePlan: parsed.activePlan === null ? null : parsePlan(parsed.activePlan),
+    savedLayouts: Array.isArray(parsed.savedLayouts)
+      ? parsed.savedLayouts.map(parseSavedLayout)
+      : []
   };
 }
 
@@ -125,6 +130,20 @@ function parsePlan(value: unknown): Plan {
     id: value.id,
     assignments,
     holdingGuestIds: value.holdingGuestIds
+  };
+}
+
+function parseSavedLayout(value: unknown): SavedLayout {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string") {
+    throw new Error("The data file contains an invalid saved layout.");
+  }
+
+  return {
+    id: value.id,
+    name: value.name,
+    savedAt: typeof value.savedAt === "string" ? value.savedAt : new Date().toISOString(),
+    plan: parsePlan(value.plan),
+    scoreTotal: typeof value.scoreTotal === "number" ? value.scoreTotal : 0
   };
 }
 
