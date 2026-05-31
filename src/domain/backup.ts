@@ -1,8 +1,8 @@
-import type { ConstraintPair, ConstraintType, Plan, SeatAssignments } from "./types";
+import type { Constraint, ConstraintType, Plan, SeatAssignments } from "./types";
 
 export interface PlannerData {
   guestText: string;
-  constraints: ConstraintPair[];
+  constraints: Constraint[];
   activePlan: Plan | null;
 }
 
@@ -11,7 +11,12 @@ export interface PlannerBackup extends PlannerData {
   exportedAt: string;
 }
 
-const CONSTRAINT_TYPES = new Set<ConstraintType>(["prefer_adjacent", "avoid_adjacent"]);
+const CONSTRAINT_TYPES = new Set<ConstraintType>([
+  "prefer_adjacent",
+  "avoid_adjacent",
+  "prefer_head",
+  "avoid_head"
+]);
 
 export function createPlannerBackup(
   data: PlannerData,
@@ -44,38 +49,56 @@ export function parsePlannerBackupJson(input: string): PlannerData {
   }
 
   if (!Array.isArray(parsed.constraints)) {
-    throw new Error("The data file is missing pairings.");
+    throw new Error("The data file is missing constraints.");
   }
 
   return {
     guestText: parsed.guestText,
-    constraints: parsed.constraints.map(parseConstraintPair),
+    constraints: parsed.constraints.map(parseConstraint),
     activePlan: parsed.activePlan === null ? null : parsePlan(parsed.activePlan)
   };
 }
 
-function parseConstraintPair(value: unknown): ConstraintPair {
+function parseConstraint(value: unknown): Constraint {
   if (!isRecord(value)) {
-    throw new Error("The data file contains an invalid pairing.");
+    throw new Error("The data file contains an invalid constraint.");
   }
 
-  const { id, type, guestAId, guestBId } = value;
+  const { id, type } = value;
 
   if (
     typeof id !== "string" ||
-    typeof guestAId !== "string" ||
-    typeof guestBId !== "string" ||
     typeof type !== "string" ||
     !CONSTRAINT_TYPES.has(type as ConstraintType)
   ) {
-    throw new Error("The data file contains an invalid pairing.");
+    throw new Error("The data file contains an invalid constraint.");
+  }
+
+  if (type === "prefer_adjacent" || type === "avoid_adjacent") {
+    const { guestAId, guestBId } = value;
+
+    if (typeof guestAId !== "string" || typeof guestBId !== "string") {
+      throw new Error("The data file contains an invalid constraint.");
+    }
+
+    return {
+      id,
+      type,
+      guestAId,
+      guestBId
+    };
+  }
+
+  const { guestId } = value;
+
+  if (typeof guestId !== "string") {
+    throw new Error("The data file contains an invalid constraint.");
   }
 
   return {
     id,
-    type: type as ConstraintType,
-    guestAId,
-    guestBId
+    type: type as "prefer_head" | "avoid_head",
+    guestId
   };
 }
 

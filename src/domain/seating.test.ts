@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SEATS, SEATS_BY_ID, areSeatsAdjacent, getSeatProximity } from "./seating";
+import { HEAD_SEAT_IDS, SEATS, SEATS_BY_ID, areSeatsAdjacent, getSeatProximity, isHeadSeat } from "./seating";
 
 describe("seating graph", () => {
   it("models 39 seats with the extra seat at the second table left end", () => {
@@ -30,5 +30,13 @@ describe("seating graph", () => {
     expect(areSeatsAdjacent(39, 30)).toBe(true);
     expect(areSeatsAdjacent(39, 29)).toBe(true);
     expect(areSeatsAdjacent(39, 31)).toBe(false);
+  });
+
+  it("treats table-end seats as head seats", () => {
+    expect(HEAD_SEAT_IDS.sort((a, b) => a - b)).toEqual([1, 20, 39]);
+    expect(isHeadSeat(1)).toBe(true);
+    expect(isHeadSeat(20)).toBe(true);
+    expect(isHeadSeat(39)).toBe(true);
+    expect(isHeadSeat(11)).toBe(false);
   });
 });

@@ -1,6 +1,6 @@
 import { SEAT_IDS } from "./seating";
 import { createEmptyAssignments, scorePlan } from "./scoring";
-import type { ConstraintPair, Guest, Plan, ScoreBreakdown, SeatAssignments } from "./types";
+import type { Constraint, Guest, Plan, ScoreBreakdown, SeatAssignments } from "./types";
 
 export interface ScoredPlan {
   plan: Plan;
@@ -9,7 +9,7 @@ export interface ScoredPlan {
 
 export interface GeneratePlansOptions {
   guests: Guest[];
-  constraints: ConstraintPair[];
+  constraints: Constraint[];
   count?: number;
   attempts?: number;
   improveIterations?: number;
@@ -65,7 +65,7 @@ function createRandomPlan(guestIds: string[], rng: () => number, id: string): Pl
 function improvePlan(
   plan: Plan,
   guests: Guest[],
-  constraints: ConstraintPair[],
+  constraints: Constraint[],
   iterations: number,
   rng: () => number
 ): void {

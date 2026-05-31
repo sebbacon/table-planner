@@ -65,6 +65,34 @@ describe("scorePlan", () => {
     expect(score.avoided[0]).toMatchObject({ adjacent: true, proximity: "diagonal", points: -50 });
   });
 
+  it("rewards guests who prefer a head seat when they are at one", () => {
+    const plan = planWith({ 1: "a" });
+    const score = scorePlan(plan, guests, [
+      { id: "head-1", type: "prefer_head", guestId: "a" }
+    ]);
+
+    expect(score.headSeat[0]).toMatchObject({
+      atHead: true,
+      satisfied: true,
+      points: 36
+    });
+    expect(score.headSeatPoints).toBe(36);
+  });
+
+  it("penalizes guests who should avoid head seats when they are at one", () => {
+    const plan = planWith({ 39: "b" });
+    const score = scorePlan(plan, guests, [
+      { id: "head-1", type: "avoid_head", guestId: "b" }
+    ]);
+
+    expect(score.headSeat[0]).toMatchObject({
+      atHead: true,
+      satisfied: false,
+      points: -36
+    });
+    expect(score.headSeatPoints).toBe(-36);
+  });
+
   it("ignores unknown and other gender values for gender balance scoring", () => {
     const plan = planWith({ 11: "c", 12: "d" });
     const score = scorePlan(plan, guests, []);

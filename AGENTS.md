@@ -11,6 +11,6 @@
 
 ## Constraint Solver
 - Constraints are weighted preferences, not hard rules. The solver generates random candidate plans, improves them by local seat swaps, scores each candidate, then returns the best options.
-- High-level scoring lives in `src/domain/scoring.ts`: good pairings reward proximity, avoid pairings penalize adjacency, and gender balance adds smaller distribution points.
+- High-level scoring lives in `src/domain/scoring.ts`: good pairings reward proximity, avoid pairings penalize adjacency, head-seat constraints prefer or avoid table-end seats, and gender balance adds smaller distribution points.
 - Good adjacency is ranked: same-side left/right first, directly opposite next, table-end adjacency next, diagonal last. Avoid adjacency still treats all adjacency/proximity tiers as bad.
 - Candidate generation and local search live in `src/domain/solver.ts`. Keep scoring policy in `scoring.ts` unless the search strategy itself changes.

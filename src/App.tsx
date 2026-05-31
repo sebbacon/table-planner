@@ -1,8 +1,11 @@
 import {
+  ChevronDown,
+  ChevronUp,
   Download,
   FileDown,
   FileUp,
   GripVertical,
+  Pencil,
   Plus,
   Printer,
   RefreshCw,
@@ -19,7 +22,17 @@ import { SEAT_IDS, SEATS } from "./domain/seating";
 import { createInitialPlan, scorePlan } from "./domain/scoring";
 import { generatePlans, type ScoredPlan } from "./domain/solver";
 import { spreadsheetFileToGuestText } from "./domain/spreadsheet";
-import type { ConstraintPair, ConstraintType, Guest, Plan, ScoreBreakdown } from "./domain/types";
+import {
+  isHeadSeatConstraint,
+  isPairConstraint,
+  type Constraint,
+  type HeadSeatConstraint,
+  type PairConstraintType,
+  type ConstraintPair,
+  type Guest,
+  type Plan,
+  type ScoreBreakdown
+} from "./domain/types";
 import { parseGuestText } from "./domain/parser";
 
 const STORAGE_KEY = "table-planner-state-v1";
@@ -31,10 +44,13 @@ const PLACEHOLDER_GUESTS = Array.from({ length: 39 }, (_, index) => {
 
 export function App() {
   const [guestText, setGuestText] = useState("");
-  const [constraints, setConstraints] = useState<ConstraintPair[]>([]);
+  const [constraints, setConstraints] = useState<Constraint[]>([]);
   const [activePlan, setActivePlan] = useState<Plan | null>(null);
   const [candidates, setCandidates] = useState<ScoredPlan[]>([]);
   const [draggedGuestId, setDraggedGuestId] = useState<string | null>(null);
+  const [highlightedGuestId, setHighlightedGuestId] = useState<string | null>(null);
+  const [isEditingGuests, setIsEditingGuests] = useState(false);
+  const [isGuestPanelCollapsed, setIsGuestPanelCollapsed] = useState(false);
   const [importWarnings, setImportWarnings] = useState<string[]>([]);
   const [importError, setImportError] = useState("");
   const [saveStatus, setSaveStatus] = useState("Not saved");
@@ -61,15 +77,7 @@ export function App() {
   const guests = parseResult.guests;
   const guestsById = useMemo(() => new Map(guests.map((guest) => [guest.id, guest])), [guests]);
   const validConstraints = useMemo(
-    () =>
-      constraints.filter(
-        (pair) =>
-          pair.guestAId &&
-          pair.guestBId &&
-          pair.guestAId !== pair.guestBId &&
-          guestsById.has(pair.guestAId) &&
-          guestsById.has(pair.guestBId)
-      ),
+    () => constraints.filter((constraint) => isValidConstraint(constraint, guestsById)),
     [constraints, guestsById]
   );
   const activeScore = useMemo(
@@ -106,10 +114,23 @@ export function App() {
     setSaveStatus("Generated, not saved");
   }
 
-  function handleGuestTextChange(nextGuestText: string) {
+  function handleGuestTextChange(nextGuestText: string, options: { resetDerivedState?: boolean } = {}) {
+    const nextGuestIds = new Set(parseGuestText(nextGuestText).guests.map((guest) => guest.id));
+
     setGuestText(nextGuestText);
-    setConstraints([]);
-    setActivePlan(null);
+
+    if (options.resetDerivedState) {
+      setConstraints([]);
+      setActivePlan(null);
+    } else {
+      setConstraints((currentConstraints) =>
+        currentConstraints.filter((constraint) => constraintGuestIdsExist(constraint, nextGuestIds))
+      );
+      setActivePlan((currentPlan) =>
+        currentPlan ? reconcilePlanForGuestIds(currentPlan, nextGuestIds) : null
+      );
+    }
+
     setCandidates([]);
     setImportWarnings([]);
     setImportError("");
@@ -126,7 +147,7 @@ export function App() {
 
     try {
       const result = await spreadsheetFileToGuestText(file);
-      handleGuestTextChange(result.guestText);
+      handleGuestTextChange(result.guestText, { resetDerivedState: true });
       setImportWarnings(result.warnings);
       setSaveStatus(`Imported ${result.importedCount} guest${result.importedCount === 1 ? "" : "s"}`);
     } catch (error) {
@@ -152,7 +173,7 @@ export function App() {
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
-    setSaveStatus(`Exported ${constraints.length} pairing${constraints.length === 1 ? "" : "s"}`);
+    setSaveStatus(`Exported ${constraints.length} constraint${constraints.length === 1 ? "" : "s"}`);
   }
 
   async function handleDataImport(event: ChangeEvent<HTMLInputElement>) {
@@ -171,7 +192,7 @@ export function App() {
       setCandidates([]);
       setImportWarnings([]);
       setImportError("");
-      setSaveStatus(`Imported data with ${imported.constraints.length} pairing${imported.constraints.length === 1 ? "" : "s"}`);
+      setSaveStatus(`Imported data with ${imported.constraints.length} constraint${imported.constraints.length === 1 ? "" : "s"}`);
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "The data file could not be imported.");
       setSaveStatus("Data import failed");
@@ -223,6 +244,7 @@ export function App() {
 
   const genderCounts = countGenders(guests);
   const hasTooManyGuests = guests.length > SEAT_IDS.length;
+  const hasSaveableData = Boolean(guestText.trim() || constraints.length > 0 || activePlan);
 
   return (
     <div className="app-shell">
@@ -240,11 +262,11 @@ export function App() {
             <RefreshCw size={18} />
             Reset
           </button>
-          <button type="button" onClick={handleSave} disabled={!activePlan}>
+          <button type="button" onClick={handleSave} disabled={!hasSaveableData}>
             <Save size={18} />
             Save
           </button>
-          <button type="button" onClick={handleDataExport} disabled={!guestText && constraints.length === 0 && !activePlan}>
+          <button type="button" onClick={handleDataExport} disabled={!hasSaveableData}>
             <FileDown size={18} />
             Export Data
           </button>
@@ -272,46 +294,70 @@ export function App() {
             <div className="section-heading">
               <h2>Guests</h2>
               <div className="guest-actions">
-                <label className="file-upload-button">
-                  <Upload size={16} />
-                  Upload
-                  <input
-                    aria-label="Upload spreadsheet"
-                    className="visually-hidden"
-                    type="file"
-                    accept=".xlsx,.csv,.tsv,text/csv,text/tab-separated-values,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    onChange={handleSpreadsheetUpload}
-                  />
-                </label>
-                <button type="button" className="icon-text-button" onClick={() => handleGuestTextChange(PLACEHOLDER_GUESTS)}>
-                  <Download size={16} />
-                  Fill placeholders
+                {!isGuestPanelCollapsed && (isEditingGuests ? (
+                  <>
+                    <label className="file-upload-button icon-text-button">
+                      <Upload size={16} />
+                      Upload
+                      <input
+                        aria-label="Upload spreadsheet"
+                        className="visually-hidden"
+                        type="file"
+                        accept=".xlsx,.csv,.tsv,text/csv,text/tab-separated-values,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        onChange={handleSpreadsheetUpload}
+                      />
+                    </label>
+                    <button type="button" className="icon-text-button" onClick={() => handleGuestTextChange(PLACEHOLDER_GUESTS, { resetDerivedState: true })}>
+                      <Download size={16} />
+                      Fill
+                    </button>
+                    <button type="button" className="icon-text-button" onClick={() => setIsEditingGuests(false)}>
+                      <Save size={16} />
+                      Save
+                    </button>
+                  </>
+                ) : (
+                  <button type="button" className="icon-text-button" onClick={() => setIsEditingGuests(true)}>
+                    <Pencil size={16} />
+                    Edit
+                  </button>
+                ))}
+                <button type="button" className="icon-button" onClick={() => setIsGuestPanelCollapsed((c) => !c)} aria-label={isGuestPanelCollapsed ? "Expand guest list" : "Collapse guest list"}>
+                  {isGuestPanelCollapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
                 </button>
               </div>
             </div>
-            <textarea
-              aria-label="Guest list"
-              className="guest-input"
-              value={guestText}
-              onChange={(event) => handleGuestTextChange(event.target.value)}
-              placeholder={"Jane Smith, F\nSam Jones, M\nAlex Lee, Other\nPat Morgan"}
-            />
-            <div className="guest-meta">
-              <span>{genderCounts.male} M</span>
-              <span>{genderCounts.female} F</span>
-              <span>{genderCounts.other} Other</span>
-              <span>{genderCounts.unknown} unknown</span>
-            </div>
-            {hasTooManyGuests ? (
-              <p className="warning-text">{guests.length - SEAT_IDS.length} guest(s) will start in holding.</p>
-            ) : null}
-            {importError ? <p className="warning-text">{importError}</p> : null}
-            {importWarnings.map((warning) => (
-              <p className="warning-text" key={warning}>{warning}</p>
-            ))}
-            {parseResult.warnings.map((warning) => (
-              <p className="warning-text" key={warning}>{warning}</p>
-            ))}
+            {!isGuestPanelCollapsed && (
+              <>
+                {isEditingGuests ? (
+                  <textarea
+                    aria-label="Guest list"
+                    className="guest-input"
+                    value={guestText}
+                    onChange={(event) => handleGuestTextChange(event.target.value)}
+                    placeholder={"Jane Smith, F\nSam Jones, M\nAlex Lee, Other\nPat Morgan"}
+                  />
+                ) : (
+                  <GuestList guests={guests} onGuestHighlight={setHighlightedGuestId} />
+                )}
+                <div className="guest-meta">
+                  <span>{genderCounts.male} M</span>
+                  <span>{genderCounts.female} F</span>
+                  <span>{genderCounts.other} Other</span>
+                  <span>{genderCounts.unknown} unknown</span>
+                </div>
+                {hasTooManyGuests ? (
+                  <p className="warning-text">{guests.length - SEAT_IDS.length} guest(s) will start in holding.</p>
+                ) : null}
+                {importError ? <p className="warning-text">{importError}</p> : null}
+                {importWarnings.map((warning) => (
+                  <p className="warning-text" key={warning}>{warning}</p>
+                ))}
+                {parseResult.warnings.map((warning) => (
+                  <p className="warning-text" key={warning}>{warning}</p>
+                ))}
+              </>
+            )}
           </section>
 
           <PairEditor
@@ -335,6 +381,15 @@ export function App() {
               setSaveStatus("Constraints changed");
             }}
           />
+
+          <HeadSeatEditor
+            guests={guests}
+            constraints={constraints}
+            onChange={(nextConstraints) => {
+              setConstraints(nextConstraints);
+              setSaveStatus("Constraints changed");
+            }}
+          />
         </aside>
 
         <section className="planner-surface">
@@ -351,12 +406,14 @@ export function App() {
               <TablePlan
                 plan={activePlan}
                 guestsById={guestsById}
+                highlightedGuestId={highlightedGuestId}
                 onDragStart={setDraggedGuestId}
                 onDropIntoSeat={handleDropIntoSeat}
               />
               <HoldingArea
                 guestIds={holdingGuestIds}
                 guestsById={guestsById}
+                highlightedGuestId={highlightedGuestId}
                 onDragStart={setDraggedGuestId}
                 onDropIntoHolding={handleDropIntoHolding}
               />
@@ -370,7 +427,11 @@ export function App() {
         </section>
 
         <aside className="results-panel">
-          <ScorePanel score={activeScore} guestsById={guestsById} />
+          <ScorePanel
+            score={activeScore}
+            guestsById={guestsById}
+            onGuestHighlight={setHighlightedGuestId}
+          />
           <CandidateList
             candidates={candidates}
             activePlan={activePlan}
@@ -385,16 +446,50 @@ export function App() {
   );
 }
 
+function GuestList({
+  guests,
+  onGuestHighlight
+}: {
+  guests: Guest[];
+  onGuestHighlight: (guestId: string | null) => void;
+}) {
+  if (guests.length === 0) {
+    return <p className="muted-text">No guests yet. Click Edit to add guests.</p>;
+  }
+
+  const sorted = [...guests].sort((a, b) => a.name.localeCompare(b.name));
+
+  return (
+    <div className="guest-list-view">
+      {sorted.map((guest) => (
+        <button
+          key={guest.id}
+          className="guest-list-name"
+          type="button"
+          onMouseEnter={() => onGuestHighlight(guest.id)}
+          onMouseLeave={() => onGuestHighlight(null)}
+          onFocus={() => onGuestHighlight(guest.id)}
+          onBlur={() => onGuestHighlight(null)}
+        >
+          {guest.name}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 interface PairEditorProps {
   title: string;
-  type: ConstraintType;
+  type: PairConstraintType;
   guests: Guest[];
-  constraints: ConstraintPair[];
-  onChange: (constraints: ConstraintPair[]) => void;
+  constraints: Constraint[];
+  onChange: (constraints: Constraint[]) => void;
 }
 
 function PairEditor({ title, type, guests, constraints, onChange }: PairEditorProps) {
-  const pairs = constraints.filter((pair) => pair.type === type);
+  const pairs = constraints.filter(
+    (constraint): constraint is ConstraintPair => isPairConstraint(constraint) && constraint.type === type
+  );
 
   function addPair() {
     if (guests.length < 2) {
@@ -413,7 +508,11 @@ function PairEditor({ title, type, guests, constraints, onChange }: PairEditorPr
   }
 
   function updatePair(pairId: string, field: "guestAId" | "guestBId", value: string) {
-    onChange(constraints.map((pair) => (pair.id === pairId ? { ...pair, [field]: value } : pair)));
+    onChange(
+      constraints.map((constraint) =>
+        isPairConstraint(constraint) && constraint.id === pairId ? { ...constraint, [field]: value } : constraint
+      )
+    );
   }
 
   function removePair(pairId: string) {
@@ -452,14 +551,88 @@ function PairEditor({ title, type, guests, constraints, onChange }: PairEditorPr
   );
 }
 
+interface HeadSeatEditorProps {
+  guests: Guest[];
+  constraints: Constraint[];
+  onChange: (constraints: Constraint[]) => void;
+}
+
+function HeadSeatEditor({ guests, constraints, onChange }: HeadSeatEditorProps) {
+  const headConstraints = constraints.filter(isHeadSeatConstraint);
+
+  function addConstraint() {
+    if (guests.length === 0) {
+      return;
+    }
+
+    onChange([
+      ...constraints,
+      {
+        id: `head-${crypto.randomUUID()}`,
+        type: "prefer_head",
+        guestId: guests[0].id
+      }
+    ]);
+  }
+
+  function updateConstraint(
+    constraintId: string,
+    field: "guestId" | "type",
+    value: HeadSeatConstraint["guestId"] | HeadSeatConstraint["type"]
+  ) {
+    onChange(
+      constraints.map((constraint) =>
+        isHeadSeatConstraint(constraint) && constraint.id === constraintId
+          ? { ...constraint, [field]: value }
+          : constraint
+      )
+    );
+  }
+
+  function removeConstraint(constraintId: string) {
+    onChange(constraints.filter((constraint) => constraint.id !== constraintId));
+  }
+
+  return (
+    <section className="panel-section">
+      <div className="section-heading">
+        <h2>Head Seats</h2>
+        <button type="button" className="icon-button" onClick={addConstraint} disabled={guests.length === 0} aria-label="Add Head Seats constraint">
+          <Plus size={18} />
+        </button>
+      </div>
+      <div className="pair-list">
+        {headConstraints.length === 0 ? <p className="muted-text">No constraints yet.</p> : null}
+        {headConstraints.map((constraint) => (
+          <div className="head-row" key={constraint.id}>
+            <select value={constraint.guestId} onChange={(event) => updateConstraint(constraint.id, "guestId", event.target.value)}>
+              {guests.map((guest) => (
+                <option value={guest.id} key={guest.id}>{guest.name}</option>
+              ))}
+            </select>
+            <select value={constraint.type} onChange={(event) => updateConstraint(constraint.id, "type", event.target.value as HeadSeatConstraint["type"])}>
+              <option value="prefer_head">Prefer head</option>
+              <option value="avoid_head">Avoid head</option>
+            </select>
+            <button type="button" className="icon-button danger" onClick={() => removeConstraint(constraint.id)} aria-label="Remove head-seat constraint">
+              <Trash2 size={16} />
+            </button>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 interface TablePlanProps {
   plan: Plan;
   guestsById: Map<string, Guest>;
+  highlightedGuestId: string | null;
   onDragStart: (guestId: string) => void;
   onDropIntoSeat: (seatId: number) => void;
 }
 
-function TablePlan({ plan, guestsById, onDragStart, onDropIntoSeat }: TablePlanProps) {
+function TablePlan({ plan, guestsById, highlightedGuestId, onDragStart, onDropIntoSeat }: TablePlanProps) {
   return (
     <div className="table-plan" aria-label="Seating layout">
       {[1, 2].map((tableId) => (
@@ -479,6 +652,7 @@ function TablePlan({ plan, guestsById, onDragStart, onDropIntoSeat }: TablePlanP
                   position={seat.position}
                   guest={guest}
                   occupied={Boolean(guestId)}
+                  highlighted={Boolean(guest && guest.id === highlightedGuestId)}
                   onDragStart={onDragStart}
                   onDropIntoSeat={onDropIntoSeat}
                 />
@@ -497,11 +671,12 @@ interface SeatCellProps {
   position: number;
   guest?: Guest;
   occupied: boolean;
+  highlighted: boolean;
   onDragStart: (guestId: string) => void;
   onDropIntoSeat: (seatId: number) => void;
 }
 
-function SeatCell({ seatId, side, position, guest, occupied, onDragStart, onDropIntoSeat }: SeatCellProps) {
+function SeatCell({ seatId, side, position, guest, occupied, highlighted, onDragStart, onDropIntoSeat }: SeatCellProps) {
   const style = getSeatStyle(side, position);
 
   return (
@@ -522,7 +697,7 @@ function SeatCell({ seatId, side, position, guest, occupied, onDragStart, onDrop
       {guest ? (
         <button
           type="button"
-          className={`guest-chip ${getGenderClass(guest)}`}
+          className={`guest-chip ${getGenderClass(guest)}${highlighted ? " highlighted" : ""}`}
           draggable
           onDragStart={() => onDragStart(guest.id)}
           title={`${guest.name}${guest.gender !== "Unknown" ? `, ${guest.gender}` : ""}`}
@@ -540,11 +715,12 @@ function SeatCell({ seatId, side, position, guest, occupied, onDragStart, onDrop
 interface HoldingAreaProps {
   guestIds: string[];
   guestsById: Map<string, Guest>;
+  highlightedGuestId: string | null;
   onDragStart: (guestId: string) => void;
   onDropIntoHolding: () => void;
 }
 
-function HoldingArea({ guestIds, guestsById, onDragStart, onDropIntoHolding }: HoldingAreaProps) {
+function HoldingArea({ guestIds, guestsById, highlightedGuestId, onDragStart, onDropIntoHolding }: HoldingAreaProps) {
   return (
     <div
       className="holding-area"
@@ -562,7 +738,7 @@ function HoldingArea({ guestIds, guestsById, onDragStart, onDropIntoHolding }: H
 
           return guest ? (
             <button
-              className={`guest-chip holding-chip ${getGenderClass(guest)}`}
+              className={`guest-chip holding-chip ${getGenderClass(guest)}${guest.id === highlightedGuestId ? " highlighted" : ""}`}
               type="button"
               draggable
               onDragStart={() => onDragStart(guest.id)}
@@ -582,9 +758,10 @@ function HoldingArea({ guestIds, guestsById, onDragStart, onDropIntoHolding }: H
 interface ScorePanelProps {
   score: ScoreBreakdown | null;
   guestsById: Map<string, Guest>;
+  onGuestHighlight: (guestId: string | null) => void;
 }
 
-function ScorePanel({ score, guestsById }: ScorePanelProps) {
+function ScorePanel({ score, guestsById, onGuestHighlight }: ScorePanelProps) {
   if (!score) {
     return (
       <section className="panel-section">
@@ -596,6 +773,7 @@ function ScorePanel({ score, guestsById }: ScorePanelProps) {
 
   const missedGood = score.preferred.filter((result) => !result.adjacent).length;
   const badAdjacent = score.avoided.filter((result) => result.adjacent).length;
+  const missedHeadSeat = score.headSeat.filter((result) => !result.satisfied).length;
 
   return (
     <section className="panel-section score-panel">
@@ -606,6 +784,7 @@ function ScorePanel({ score, guestsById }: ScorePanelProps) {
       <div className="metric-grid">
         <Metric label="Good pairs met" value={`${score.preferred.length - missedGood}/${score.preferred.length}`} />
         <Metric label="Bad adjacencies" value={String(badAdjacent)} tone={badAdjacent ? "bad" : "good"} />
+        <Metric label="Head constraints" value={`${score.headSeat.length - missedHeadSeat}/${score.headSeat.length}`} tone={missedHeadSeat ? "bad" : "good"} />
         <Metric label="Gender points" value={String(score.genderPoints)} />
         <Metric label="Mixed adjacencies" value={String(score.mixedAdjacentPairs)} />
       </div>
@@ -617,8 +796,22 @@ function ScorePanel({ score, guestsById }: ScorePanelProps) {
           </div>
         ))}
       </div>
-      <PairResults title="Missed good pairs" results={score.preferred.filter((result) => !result.adjacent)} guestsById={guestsById} />
-      <PairResults title="Bad adjacent pairs" results={score.avoided.filter((result) => result.adjacent)} guestsById={guestsById} />
+      <PairResults
+        title="Missed good pairs"
+        results={score.preferred.filter((result) => !result.adjacent)}
+        guestsById={guestsById}
+        onGuestHighlight={onGuestHighlight}
+      />
+      <PairResults
+        title="Bad adjacent pairs"
+        results={score.avoided.filter((result) => result.adjacent)}
+        guestsById={guestsById}
+      />
+      <HeadSeatResults
+        results={score.headSeat.filter((result) => !result.satisfied)}
+        guestsById={guestsById}
+        onGuestHighlight={onGuestHighlight}
+      />
     </section>
   );
 }
@@ -626,11 +819,13 @@ function ScorePanel({ score, guestsById }: ScorePanelProps) {
 function PairResults({
   title,
   results,
-  guestsById
+  guestsById,
+  onGuestHighlight
 }: {
   title: string;
   results: ScoreBreakdown["preferred"];
   guestsById: Map<string, Guest>;
+  onGuestHighlight?: (guestId: string | null) => void;
 }) {
   if (results.length === 0) {
     return null;
@@ -645,11 +840,69 @@ function PairResults({
 
         return (
           <p key={result.pair.id}>
-            {guestA?.name ?? "Unknown"} / {guestB?.name ?? "Unknown"}
+            <PairResultName guest={guestA} onGuestHighlight={onGuestHighlight} />
+            <span aria-hidden="true"> / </span>
+            <PairResultName guest={guestB} onGuestHighlight={onGuestHighlight} />
           </p>
         );
       })}
     </div>
+  );
+}
+
+function HeadSeatResults({
+  results,
+  guestsById,
+  onGuestHighlight
+}: {
+  results: ScoreBreakdown["headSeat"];
+  guestsById: Map<string, Guest>;
+  onGuestHighlight: (guestId: string | null) => void;
+}) {
+  if (results.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="pair-results">
+      <h3>Head seat issues</h3>
+      {results.map((result) => {
+        const guest = guestsById.get(result.constraint.guestId);
+        const label = result.constraint.type === "prefer_head" ? "wants a head seat" : "should avoid head seats";
+
+        return (
+          <p key={result.constraint.id}>
+            <PairResultName guest={guest} onGuestHighlight={onGuestHighlight} />
+            <span> {label}</span>
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
+function PairResultName({
+  guest,
+  onGuestHighlight
+}: {
+  guest?: Guest;
+  onGuestHighlight?: (guestId: string | null) => void;
+}) {
+  if (!guest || !onGuestHighlight) {
+    return <span>{guest?.name ?? "Unknown"}</span>;
+  }
+
+  return (
+    <button
+      className="pair-result-name"
+      type="button"
+      onBlur={() => onGuestHighlight(null)}
+      onFocus={() => onGuestHighlight(guest.id)}
+      onMouseEnter={() => onGuestHighlight(guest.id)}
+      onMouseLeave={() => onGuestHighlight(null)}
+    >
+      {guest.name}
+    </button>
   );
 }
 
@@ -722,6 +975,59 @@ function moveGuestToHolding(plan: Plan, guestId: string): Plan {
 
   if (!nextPlan.holdingGuestIds.includes(guestId)) {
     nextPlan.holdingGuestIds.push(guestId);
+  }
+
+  return nextPlan;
+}
+
+function isValidConstraint(constraint: Constraint, guestsById: Map<string, Guest>): boolean {
+  if (isPairConstraint(constraint)) {
+    return (
+      constraint.guestAId !== constraint.guestBId &&
+      guestsById.has(constraint.guestAId) &&
+      guestsById.has(constraint.guestBId)
+    );
+  }
+
+  return guestsById.has(constraint.guestId);
+}
+
+function constraintGuestIdsExist(constraint: Constraint, guestIds: Set<string>): boolean {
+  if (isPairConstraint(constraint)) {
+    return guestIds.has(constraint.guestAId) && guestIds.has(constraint.guestBId);
+  }
+
+  return guestIds.has(constraint.guestId);
+}
+
+function reconcilePlanForGuestIds(plan: Plan, guestIds: Set<string>): Plan | null {
+  if (guestIds.size === 0) {
+    return null;
+  }
+
+  const nextPlan = clonePlan(plan);
+  const assignedGuestIds = new Set<string>();
+
+  for (const seatId of SEAT_IDS) {
+    const guestId = nextPlan.assignments[seatId];
+
+    if (!guestId || !guestIds.has(guestId)) {
+      nextPlan.assignments[seatId] = null;
+      continue;
+    }
+
+    assignedGuestIds.add(guestId);
+  }
+
+  nextPlan.holdingGuestIds = nextPlan.holdingGuestIds.filter(
+    (guestId) => guestIds.has(guestId) && !assignedGuestIds.has(guestId)
+  );
+
+  const holdingGuestIds = new Set(nextPlan.holdingGuestIds);
+  for (const guestId of guestIds) {
+    if (!assignedGuestIds.has(guestId) && !holdingGuestIds.has(guestId)) {
+      nextPlan.holdingGuestIds.push(guestId);
+    }
   }
 
   return nextPlan;

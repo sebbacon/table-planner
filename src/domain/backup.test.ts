@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createPlannerBackup, parsePlannerBackupJson } from "./backup";
-import type { ConstraintPair } from "./types";
+import type { Constraint, ConstraintPair } from "./types";
 
 const pair: ConstraintPair = {
   id: "pair-1",
@@ -30,12 +30,17 @@ describe("planner backup", () => {
   });
 
   it("parses a valid backup", () => {
+    const headConstraint: Constraint = {
+      id: "head-1",
+      type: "prefer_head",
+      guestId: "guest-1-jane"
+    };
     const parsed = parsePlannerBackupJson(
       JSON.stringify({
         version: 1,
         exportedAt: "2026-05-27T12:00:00.000Z",
         guestText: "Jane, F\nSam, M",
-        constraints: [pair],
+        constraints: [pair, headConstraint],
         activePlan: {
           id: "plan-1",
           assignments: { 11: "guest-1-jane", 12: "guest-2-sam" },
@@ -44,7 +49,7 @@ describe("planner backup", () => {
       })
     );
 
-    expect(parsed.constraints).toEqual([pair]);
+    expect(parsed.constraints).toEqual([pair, headConstraint]);
     expect(parsed.activePlan?.assignments[11]).toBe("guest-1-jane");
   });
 

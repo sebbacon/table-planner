@@ -34,6 +34,10 @@ export const SEAT_IDS = SEATS.map((seat) => seat.id);
 
 export const SEATS_BY_ID = new Map(SEATS.map((seat) => [seat.id, seat]));
 
+export const HEAD_SEAT_IDS = SEATS.filter((seat) => seat.side === "left-end" || seat.side === "right-end").map(
+  (seat) => seat.id
+);
+
 export const ADJACENT_SEAT_IDS = buildAdjacentSeatIds();
 
 export function areSeatsAdjacent(seatAId: number, seatBId: number): boolean {
@@ -53,6 +57,12 @@ export function getSeatProximity(seatAId: number, seatBId: number): SeatProximit
 
 export function getSeatIdsForTable(tableId: 1 | 2): number[] {
   return SEATS.filter((seat) => seat.tableId === tableId).map((seat) => seat.id);
+}
+
+export function isHeadSeat(seatId: number): boolean {
+  const seat = SEATS_BY_ID.get(seatId);
+
+  return seat?.side === "left-end" || seat?.side === "right-end";
 }
 
 function buildAdjacentSeatIds(): Map<number, Set<number>> {
