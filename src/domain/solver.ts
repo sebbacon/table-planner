@@ -1,7 +1,7 @@
-import { HEAD_SEAT_IDS, SEAT_IDS, isHeadSeat } from "./seating";
-import { createEmptyAssignments, scorePlan } from "./scoring";
-import { isHeadSeatConstraint } from "./types";
-import type { Constraint, Guest, Plan, ScoreBreakdown, SeatAssignments } from "./types";
+import { HEAD_SEAT_IDS, SEAT_IDS, getSeatProximity, isHeadSeat } from "./seating";
+import { createEmptyAssignments, getGuestSeatIds, scorePlan } from "./scoring";
+import { isHeadSeatConstraint, isPairConstraint } from "./types";
+import type { Constraint, ConstraintPair, Guest, Plan, ScoreBreakdown, SeatAssignments } from "./types";
 
 export interface ScoredPlan {
   plan: Plan;
@@ -45,10 +45,13 @@ export function generatePlans({
   const avoidHeadIds = new Set(
     constraints.filter(isHeadSeatConstraint).filter((c) => c.type === "avoid_head").map((c) => c.guestId)
   );
+  const preferPairs = constraints.filter(
+    (c): c is ConstraintPair => isPairConstraint(c) && c.type === "prefer_adjacent"
+  );
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const plan = createRandomPlan(guestIds, preferHeadIds, avoidHeadIds, rng, `candidate-${attempt}`);
-    improvePlan(plan, guests, constraints, preferHeadIds, avoidHeadIds, improveIterations, rng);
+    improvePlan(plan, guests, constraints, preferHeadIds, avoidHeadIds, preferPairs, improveIterations, rng);
     const signature = getPlanSignature(plan);
 
     if (signatures.has(signature)) {
@@ -125,18 +128,17 @@ function improvePlan(
   constraints: Constraint[],
   preferHeadIds: Set<string>,
   avoidHeadIds: Set<string>,
+  preferPairs: ConstraintPair[],
   iterations: number,
   rng: () => number
 ): void {
   let currentScore = scorePlan(plan, guests, constraints).total;
   const swappableSeatIds = [...SEAT_IDS];
-  // Kick after this many consecutive swaps without strict improvement
   const kickThreshold = Math.max(50, Math.floor(iterations * 0.10));
   let noImprovementCount = 0;
 
   for (let index = 0; index < iterations; index += 1) {
     if (noImprovementCount >= kickThreshold) {
-      // Escape local optimum: make several random valid swaps, then re-score
       for (let k = 0; k < 4; k += 1) {
         const a = randomItem(swappableSeatIds, rng);
         const b = randomItem(swappableSeatIds, rng);
@@ -149,8 +151,19 @@ function improvePlan(
       continue;
     }
 
-    const seatAId = randomItem(swappableSeatIds, rng);
-    const seatBId = randomItem(swappableSeatIds, rng);
+    let seatAId: number;
+    let seatBId: number;
+
+    const guided = preferPairs.length > 0 && rng() < 0.40
+      ? findGuidedSwap(plan, preferPairs, preferHeadIds, avoidHeadIds, rng)
+      : null;
+
+    if (guided) {
+      ({ seatAId, seatBId } = guided);
+    } else {
+      seatAId = randomItem(swappableSeatIds, rng);
+      seatBId = randomItem(swappableSeatIds, rng);
+    }
 
     if (seatAId === seatBId) {
       continue;
@@ -175,6 +188,55 @@ function improvePlan(
       noImprovementCount += 1;
     }
   }
+}
+
+function findGuidedSwap(
+  plan: Plan,
+  preferPairs: ConstraintPair[],
+  preferHeadIds: Set<string>,
+  avoidHeadIds: Set<string>,
+  rng: () => number
+): { seatAId: number; seatBId: number } | null {
+  const guestSeatIds = getGuestSeatIds(plan.assignments);
+
+  const unsatisfied = preferPairs.filter(pair => {
+    const seatA = guestSeatIds.get(pair.guestAId);
+    const seatB = guestSeatIds.get(pair.guestBId);
+    if (seatA === undefined || seatB === undefined) return false;
+    const proximity = getSeatProximity(seatA, seatB);
+    const strength = pair.strength ?? "medium";
+    if (strength === "high") return proximity !== "left_right" && proximity !== "end";
+    if (strength === "medium") return proximity === "diagonal" || proximity === "none";
+    return proximity === "none";
+  });
+
+  if (unsatisfied.length === 0) return null;
+
+  const pair = randomItem(unsatisfied, rng);
+  const strength = pair.strength ?? "medium";
+
+  const [moverId, anchorId] = rng() < 0.5
+    ? [pair.guestAId, pair.guestBId]
+    : [pair.guestBId, pair.guestAId];
+
+  const moverSeatId = guestSeatIds.get(moverId);
+  const anchorSeatId = guestSeatIds.get(anchorId);
+  if (moverSeatId === undefined || anchorSeatId === undefined) return null;
+
+  const targetSeats = SEAT_IDS.filter(seatId => {
+    const proximity = getSeatProximity(anchorSeatId, seatId);
+    if (strength === "high") return proximity === "left_right" || proximity === "end";
+    if (strength === "medium") return proximity === "left_right" || proximity === "end" || proximity === "opposite";
+    return proximity !== "none";
+  });
+
+  if (targetSeats.length === 0) return null;
+
+  const targetSeatId = randomItem(targetSeats, rng);
+  if (targetSeatId === moverSeatId) return null;
+  if (!isHeadSwapAllowed(moverSeatId, targetSeatId, plan.assignments, preferHeadIds, avoidHeadIds)) return null;
+
+  return { seatAId: moverSeatId, seatBId: targetSeatId };
 }
 
 function isHeadSwapAllowed(

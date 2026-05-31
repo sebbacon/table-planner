@@ -10,7 +10,7 @@ const guests: Guest[] = [
 ];
 
 describe("scorePlan", () => {
-  it("rewards preferred left-right pairs most strongly", () => {
+  it("rewards preferred left-right pairs most strongly (medium strength)", () => {
     const plan = planWith({ 11: "a", 12: "b" });
     const constraints: ConstraintPair[] = [
       { id: "pair-1", type: "prefer_adjacent", guestAId: "a", guestBId: "b" }
@@ -25,7 +25,7 @@ describe("scorePlan", () => {
     });
   });
 
-  it("scores preferred opposite pairs above diagonal pairs", () => {
+  it("scores preferred opposite pairs above diagonal pairs (medium strength)", () => {
     const constraints: ConstraintPair[] = [
       { id: "pair-1", type: "prefer_adjacent", guestAId: "a", guestBId: "b" }
     ];
@@ -38,12 +38,12 @@ describe("scorePlan", () => {
     });
     expect(diagonalScore.preferred[0]).toMatchObject({
       proximity: "diagonal",
-      points: 12
+      points: 8
     });
     expect(oppositeScore.preferencePoints).toBeGreaterThan(diagonalScore.preferencePoints);
   });
 
-  it("does not reward preferred pairs that are not adjacent", () => {
+  it("penalizes medium preferred pairs that are not adjacent at all", () => {
     const plan = planWith({ 11: "a", 8: "b" });
     const constraints: ConstraintPair[] = [
       { id: "pair-1", type: "prefer_adjacent", guestAId: "a", guestBId: "b" }
@@ -51,7 +51,39 @@ describe("scorePlan", () => {
 
     const score = scorePlan(plan, guests, constraints);
 
-    expect(score.preferred[0]).toMatchObject({ adjacent: false, proximity: "none", points: 0 });
+    expect(score.preferred[0]).toMatchObject({ adjacent: false, proximity: "none", points: -16 });
+  });
+
+  it("penalizes high preferred pairs for non-adjacent placement", () => {
+    const constraints: ConstraintPair[] = [
+      { id: "pair-1", type: "prefer_adjacent", guestAId: "a", guestBId: "b", strength: "high" }
+    ];
+
+    expect(scorePlan(planWith({ 11: "a", 12: "b" }), guests, constraints).preferred[0]).toMatchObject({
+      adjacent: true, proximity: "left_right", points: 80
+    });
+    expect(scorePlan(planWith({ 11: "a", 10: "b" }), guests, constraints).preferred[0]).toMatchObject({
+      adjacent: false, proximity: "opposite", points: -20
+    });
+    expect(scorePlan(planWith({ 11: "a", 9: "b" }), guests, constraints).preferred[0]).toMatchObject({
+      adjacent: false, proximity: "diagonal", points: -40
+    });
+    expect(scorePlan(planWith({ 11: "a", 8: "b" }), guests, constraints).preferred[0]).toMatchObject({
+      adjacent: false, proximity: "none", points: -80
+    });
+  });
+
+  it("penalizes low preferred pairs only when fully separated (none)", () => {
+    const constraints: ConstraintPair[] = [
+      { id: "pair-1", type: "prefer_adjacent", guestAId: "a", guestBId: "b", strength: "low" }
+    ];
+
+    expect(scorePlan(planWith({ 11: "a", 9: "b" }), guests, constraints).preferred[0]).toMatchObject({
+      adjacent: true, proximity: "diagonal", points: 12
+    });
+    expect(scorePlan(planWith({ 11: "a", 8: "b" }), guests, constraints).preferred[0]).toMatchObject({
+      adjacent: false, proximity: "none", points: -12
+    });
   });
 
   it("penalizes avoid pairs that are diagonal across the table", () => {

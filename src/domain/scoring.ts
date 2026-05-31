@@ -17,9 +17,9 @@ import type {
 import { isHeadSeatConstraint, isPairConstraint } from "./types";
 
 const PREFER_PROXIMITY_POINTS: Record<PairStrength, Record<SeatProximity, number>> = {
-  high:   { left_right: 64, end: 64, opposite: 16, diagonal: 0,  none: 0 },
-  medium: { left_right: 48, end: 48, opposite: 32, diagonal: 12, none: 0 },
-  low:    { left_right: 24, end: 24, opposite: 18, diagonal: 12, none: 0 },
+  high:   { left_right: 80, end: 80, opposite: -20, diagonal: -40, none: -80 },
+  medium: { left_right: 48, end: 48, opposite: 32,  diagonal:   8, none: -16 },
+  low:    { left_right: 24, end: 24, opposite: 18,  diagonal:  12, none: -12 },
 };
 
 function isAdjacentForStrength(proximity: SeatProximity, strength: PairStrength): boolean {
