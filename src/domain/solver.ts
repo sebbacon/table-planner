@@ -1,7 +1,7 @@
-import { HEAD_SEAT_IDS, SEAT_IDS, getSeatIdsForTable, getSeatProximity, isHeadSeat } from "./seating";
+import { getSeatIdsForTable, getSeatProximity, isHeadSeat } from "./seating";
 import { createEmptyAssignments, getGuestSeatIds, scorePlan } from "./scoring";
 import { isHeadSeatConstraint, isPairConstraint } from "./types";
-import type { Constraint, ConstraintPair, Guest, Plan, ScoreBreakdown, SeatAssignments } from "./types";
+import type { Constraint, ConstraintPair, Guest, Plan, ScoreBreakdown, SeatingLayout, SeatAssignments } from "./types";
 
 export interface ScoredPlan {
   plan: Plan;
@@ -11,6 +11,7 @@ export interface ScoredPlan {
 export interface GeneratePlansOptions {
   guests: Guest[];
   constraints: Constraint[];
+  layout: SeatingLayout;
   count?: number;
   attempts?: number;
   improveIterations?: number;
@@ -30,6 +31,7 @@ export const DEFAULT_EFFORT = 3;
 export function generatePlans({
   guests,
   constraints,
+  layout,
   count = 6,
   attempts = EFFORT_LEVELS[DEFAULT_EFFORT - 1].attempts,
   improveIterations = EFFORT_LEVELS[DEFAULT_EFFORT - 1].improveIterations,
@@ -50,18 +52,16 @@ export function generatePlans({
   );
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const plan = createRandomPlan(guestIds, preferHeadIds, avoidHeadIds, preferPairs, rng, `candidate-${attempt}`);
-    improvePlan(plan, guests, constraints, preferHeadIds, avoidHeadIds, preferPairs, improveIterations, rng);
-    const signature = getPlanSignature(plan);
+    const plan = createRandomPlan(guestIds, preferHeadIds, avoidHeadIds, preferPairs, layout, rng, `candidate-${attempt}`);
+    improvePlan(plan, guests, constraints, preferHeadIds, avoidHeadIds, preferPairs, layout, improveIterations, rng);
+    const signature = getPlanSignature(plan, layout);
 
-    if (signatures.has(signature)) {
-      continue;
-    }
+    if (signatures.has(signature)) continue;
 
     signatures.add(signature);
     candidates.push({
       plan,
-      score: scorePlan(plan, guests, constraints)
+      score: scorePlan(plan, guests, constraints, layout)
     });
   }
 
@@ -73,49 +73,80 @@ function createRandomPlan(
   preferHeadIds: Set<string>,
   avoidHeadIds: Set<string>,
   preferPairs: ConstraintPair[],
+  layout: SeatingLayout,
   rng: () => number,
   id: string
 ): Plan {
-  const assignments = createEmptyAssignments();
+  const assignments = createEmptyAssignments(layout);
 
-  const table1SeatIds = getSeatIdsForTable(1);
-  const table2SeatIds = getSeatIdsForTable(2);
-  const totalSeats = table1SeatIds.length + table2SeatIds.length;
+  const totalSeats = layout.seatIds.length;
   const n = Math.min(guestIds.length, totalSeats);
-  const t1Cap = Math.min(table1SeatIds.length, Math.ceil(n / 2));
-  const t2Cap = Math.min(table2SeatIds.length, n - t1Cap);
 
-  const { table1Guests, table2Guests } = partitionGuestsByTable(
-    guestIds.slice(0, n), preferPairs, t1Cap, t2Cap, rng
+  // Compute per-table capacities proportional to table size
+  const tableSeatIds = layout.tableIds.map((tableId) => getSeatIdsForTable(tableId, layout));
+  const caps = computeTableCaps(tableSeatIds, n);
+
+  const { tableGuests } = partitionGuestsByTable(
+    guestIds.slice(0, n), preferPairs, layout.tableIds, caps, rng
   );
 
-  assignToTable(table1Guests, table1SeatIds, preferHeadIds, avoidHeadIds, assignments, rng);
-  assignToTable(table2Guests, table2SeatIds, preferHeadIds, avoidHeadIds, assignments, rng);
+  for (let i = 0; i < layout.tableIds.length; i++) {
+    assignToTable(tableGuests[i], tableSeatIds[i], preferHeadIds, avoidHeadIds, layout, assignments, rng);
+  }
 
   return { id, assignments, holdingGuestIds: guestIds.slice(n) };
+}
+
+function computeTableCaps(tableSeatIds: number[][], n: number): number[] {
+  const total = tableSeatIds.reduce((s, ids) => s + ids.length, 0);
+  const caps: number[] = [];
+  let remaining = n;
+
+  for (let i = 0; i < tableSeatIds.length; i++) {
+    if (i === tableSeatIds.length - 1) {
+      caps.push(Math.min(tableSeatIds[i].length, remaining));
+    } else {
+      const share = Math.round((tableSeatIds[i].length / total) * n);
+      const cap = Math.min(tableSeatIds[i].length, share);
+      caps.push(cap);
+      remaining -= cap;
+    }
+  }
+
+  return caps;
 }
 
 function partitionGuestsByTable(
   guestIds: string[],
   preferPairs: ConstraintPair[],
-  t1Cap: number,
-  t2Cap: number,
+  tableIds: number[],
+  caps: number[],
   rng: () => number
-): { table1Guests: string[]; table2Guests: string[] } {
+): { tableGuests: string[][] } {
   const guestSet = new Set(guestIds);
-  const tableOf = new Map<string, 1 | 2>();
-  let t1Count = 0;
-  let t2Count = 0;
+  const tableOf = new Map<string, number>(); // guestId → tableId
+  const counts = new Map<number, number>(tableIds.map((id) => [id, 0]));
 
-  function tryAssign(guestId: string, table: 1 | 2): boolean {
+  function tryAssign(guestId: string, tableId: number): boolean {
     if (!guestSet.has(guestId)) return false;
-    if (tableOf.has(guestId)) return tableOf.get(guestId) === table;
-    const cap = table === 1 ? t1Cap : t2Cap;
-    const count = table === 1 ? t1Count : t2Count;
-    if (count >= cap) return false;
-    tableOf.set(guestId, table);
-    if (table === 1) t1Count += 1; else t2Count += 1;
+    if (tableOf.has(guestId)) return tableOf.get(guestId) === tableId;
+    const idx = tableIds.indexOf(tableId);
+    if (idx === -1) return false;
+    if ((counts.get(tableId) ?? 0) >= caps[idx]) return false;
+    tableOf.set(guestId, tableId);
+    counts.set(tableId, (counts.get(tableId) ?? 0) + 1);
     return true;
+  }
+
+  function smallestTable(): number {
+    let best = tableIds[0];
+    let bestRatio = Infinity;
+    for (let i = 0; i < tableIds.length; i++) {
+      const id = tableIds[i];
+      const ratio = (counts.get(id) ?? 0) / caps[i];
+      if (ratio < bestRatio) { bestRatio = ratio; best = id; }
+    }
+    return best;
   }
 
   const strengthWeight: Record<string, number> = { high: 3, medium: 2, low: 1 };
@@ -134,24 +165,32 @@ function partitionGuestsByTable(
     } else if (bTable !== undefined) {
       tryAssign(pair.guestAId, bTable);
     } else {
-      const preferred: 1 | 2 = t1Count <= t2Count ? 1 : 2;
-      const fallback: 1 | 2 = preferred === 1 ? 2 : 1;
-      if (!tryAssign(pair.guestAId, preferred)) tryAssign(pair.guestAId, fallback);
+      const preferred = smallestTable();
+      if (!tryAssign(pair.guestAId, preferred)) {
+        const fallback = tableIds.find((id) => id !== preferred) ?? preferred;
+        tryAssign(pair.guestAId, fallback);
+      }
       const aFinal = tableOf.get(pair.guestAId);
       if (aFinal !== undefined) {
-        if (!tryAssign(pair.guestBId, aFinal)) tryAssign(pair.guestBId, aFinal === 1 ? 2 : 1);
+        if (!tryAssign(pair.guestBId, aFinal)) {
+          const fallback = tableIds.find((id) => id !== aFinal) ?? aFinal;
+          tryAssign(pair.guestBId, fallback);
+        }
       }
     }
   }
 
-  for (const guestId of shuffle(guestIds.filter(id => !tableOf.has(id)), rng)) {
-    if (t1Count < t1Cap) tryAssign(guestId, 1);
-    else tryAssign(guestId, 2);
+  for (const guestId of shuffle(guestIds.filter((id) => !tableOf.has(id)), rng)) {
+    const target = smallestTable();
+    if (!tryAssign(guestId, target)) {
+      for (const id of tableIds) {
+        if (tryAssign(guestId, id)) break;
+      }
+    }
   }
 
   return {
-    table1Guests: guestIds.filter(id => tableOf.get(id) === 1),
-    table2Guests: guestIds.filter(id => tableOf.get(id) === 2)
+    tableGuests: tableIds.map((tableId) => guestIds.filter((id) => tableOf.get(id) === tableId))
   };
 }
 
@@ -160,15 +199,16 @@ function assignToTable(
   tableSeatIds: number[],
   preferHeadIds: Set<string>,
   avoidHeadIds: Set<string>,
+  layout: SeatingLayout,
   assignments: SeatAssignments,
   rng: () => number
 ): void {
-  const headQueue = shuffle(tableSeatIds.filter(id => HEAD_SEAT_IDS.includes(id)), rng);
-  const nonHeadQueue = shuffle(tableSeatIds.filter(id => !HEAD_SEAT_IDS.includes(id)), rng);
+  const headQueue = shuffle(tableSeatIds.filter((id) => isHeadSeat(id, layout)), rng);
+  const nonHeadQueue = shuffle(tableSeatIds.filter((id) => !isHeadSeat(id, layout)), rng);
 
-  const preferHead = shuffle(guestIds.filter(id => preferHeadIds.has(id)), rng);
-  const avoidHead = shuffle(guestIds.filter(id => avoidHeadIds.has(id)), rng);
-  const free = shuffle(guestIds.filter(id => !preferHeadIds.has(id) && !avoidHeadIds.has(id)), rng);
+  const preferHead = shuffle(guestIds.filter((id) => preferHeadIds.has(id)), rng);
+  const avoidHead = shuffle(guestIds.filter((id) => avoidHeadIds.has(id)), rng);
+  const free = shuffle(guestIds.filter((id) => !preferHeadIds.has(id) && !avoidHeadIds.has(id)), rng);
 
   for (const guestId of preferHead) {
     const seat = headQueue.shift() ?? nonHeadQueue.shift();
@@ -194,11 +234,12 @@ function improvePlan(
   preferHeadIds: Set<string>,
   avoidHeadIds: Set<string>,
   preferPairs: ConstraintPair[],
+  layout: SeatingLayout,
   iterations: number,
   rng: () => number
 ): void {
-  let currentScore = scorePlan(plan, guests, constraints).total;
-  const swappableSeatIds = [...SEAT_IDS];
+  let currentScore = scorePlan(plan, guests, constraints, layout).total;
+  const swappableSeatIds = [...layout.seatIds];
   const kickThreshold = Math.max(50, Math.floor(iterations * 0.10));
   let noImprovementCount = 0;
 
@@ -207,11 +248,11 @@ function improvePlan(
       for (let k = 0; k < 4; k += 1) {
         const a = randomItem(swappableSeatIds, rng);
         const b = randomItem(swappableSeatIds, rng);
-        if (a !== b && isHeadSwapAllowed(a, b, plan.assignments, preferHeadIds, avoidHeadIds)) {
+        if (a !== b && isHeadSwapAllowed(a, b, plan.assignments, preferHeadIds, avoidHeadIds, layout)) {
           swapAssignments(plan.assignments, a, b);
         }
       }
-      currentScore = scorePlan(plan, guests, constraints).total;
+      currentScore = scorePlan(plan, guests, constraints, layout).total;
       noImprovementCount = 0;
       continue;
     }
@@ -220,7 +261,7 @@ function improvePlan(
     let seatBId: number;
 
     const guided = preferPairs.length > 0 && rng() < 0.40
-      ? findGuidedSwap(plan, preferPairs, preferHeadIds, avoidHeadIds, rng)
+      ? findGuidedSwap(plan, preferPairs, preferHeadIds, avoidHeadIds, layout, rng)
       : null;
 
     if (guided) {
@@ -230,16 +271,11 @@ function improvePlan(
       seatBId = randomItem(swappableSeatIds, rng);
     }
 
-    if (seatAId === seatBId) {
-      continue;
-    }
-
-    if (!isHeadSwapAllowed(seatAId, seatBId, plan.assignments, preferHeadIds, avoidHeadIds)) {
-      continue;
-    }
+    if (seatAId === seatBId) continue;
+    if (!isHeadSwapAllowed(seatAId, seatBId, plan.assignments, preferHeadIds, avoidHeadIds, layout)) continue;
 
     swapAssignments(plan.assignments, seatAId, seatBId);
-    const nextScore = scorePlan(plan, guests, constraints).total;
+    const nextScore = scorePlan(plan, guests, constraints, layout).total;
     const keepWorseMove = nextScore < currentScore && rng() < 0.012;
 
     if (nextScore > currentScore) {
@@ -260,15 +296,16 @@ function findGuidedSwap(
   preferPairs: ConstraintPair[],
   preferHeadIds: Set<string>,
   avoidHeadIds: Set<string>,
+  layout: SeatingLayout,
   rng: () => number
 ): { seatAId: number; seatBId: number } | null {
   const guestSeatIds = getGuestSeatIds(plan.assignments);
 
-  const unsatisfied = preferPairs.filter(pair => {
+  const unsatisfied = preferPairs.filter((pair) => {
     const seatA = guestSeatIds.get(pair.guestAId);
     const seatB = guestSeatIds.get(pair.guestBId);
     if (seatA === undefined || seatB === undefined) return false;
-    const proximity = getSeatProximity(seatA, seatB);
+    const proximity = getSeatProximity(seatA, seatB, layout);
     const strength = pair.strength ?? "medium";
     if (strength === "high") return proximity !== "left_right" && proximity !== "end";
     if (strength === "medium") return proximity === "diagonal" || proximity === "none";
@@ -288,8 +325,8 @@ function findGuidedSwap(
   const anchorSeatId = guestSeatIds.get(anchorId);
   if (moverSeatId === undefined || anchorSeatId === undefined) return null;
 
-  const targetSeats = SEAT_IDS.filter(seatId => {
-    const proximity = getSeatProximity(anchorSeatId, seatId);
+  const targetSeats = layout.seatIds.filter((seatId) => {
+    const proximity = getSeatProximity(anchorSeatId, seatId, layout);
     if (strength === "high") return proximity === "left_right" || proximity === "end";
     if (strength === "medium") return proximity === "left_right" || proximity === "end" || proximity === "opposite";
     return proximity !== "none";
@@ -299,7 +336,7 @@ function findGuidedSwap(
 
   const targetSeatId = randomItem(targetSeats, rng);
   if (targetSeatId === moverSeatId) return null;
-  if (!isHeadSwapAllowed(moverSeatId, targetSeatId, plan.assignments, preferHeadIds, avoidHeadIds)) return null;
+  if (!isHeadSwapAllowed(moverSeatId, targetSeatId, plan.assignments, preferHeadIds, avoidHeadIds, layout)) return null;
 
   return { seatAId: moverSeatId, seatBId: targetSeatId };
 }
@@ -309,23 +346,19 @@ function isHeadSwapAllowed(
   seatBId: number,
   assignments: SeatAssignments,
   preferHeadIds: Set<string>,
-  avoidHeadIds: Set<string>
+  avoidHeadIds: Set<string>,
+  layout: SeatingLayout
 ): boolean {
-  if (preferHeadIds.size === 0 && avoidHeadIds.size === 0) {
-    return true;
-  }
+  if (preferHeadIds.size === 0 && avoidHeadIds.size === 0) return true;
 
-  const aIsHead = isHeadSeat(seatAId);
-  const bIsHead = isHeadSeat(seatBId);
+  const aIsHead = isHeadSeat(seatAId, layout);
+  const bIsHead = isHeadSeat(seatBId, layout);
 
-  if (aIsHead === bIsHead) {
-    return true;
-  }
+  if (aIsHead === bIsHead) return true;
 
   const guestA = assignments[seatAId];
   const guestB = assignments[seatBId];
 
-  // After swap: guestA → seatB, guestB → seatA
   if (guestA && preferHeadIds.has(guestA) && aIsHead && !bIsHead) return false;
   if (guestB && preferHeadIds.has(guestB) && bIsHead && !aIsHead) return false;
   if (guestA && avoidHeadIds.has(guestA) && !aIsHead && bIsHead) return false;
@@ -355,6 +388,6 @@ function randomItem<T>(items: T[], rng: () => number): T {
   return items[Math.floor(rng() * items.length)];
 }
 
-function getPlanSignature(plan: Plan): string {
-  return SEAT_IDS.map((seatId) => plan.assignments[seatId] ?? "-").join("|");
+function getPlanSignature(plan: Plan, layout: SeatingLayout): string {
+  return layout.seatIds.map((seatId) => plan.assignments[seatId] ?? "-").join("|");
 }

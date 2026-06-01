@@ -1,4 +1,4 @@
-import { ADJACENT_SEAT_IDS, SEAT_IDS, SEATS_BY_ID, getSeatProximity, isHeadSeat } from "./seating";
+import { getSeatProximity, isHeadSeat } from "./seating";
 import type {
   Constraint,
   ConstraintPair,
@@ -10,6 +10,7 @@ import type {
   PairStrength,
   Plan,
   ScoreBreakdown,
+  SeatingLayout,
   SeatAssignments,
   SeatProximity,
   TableGenderScore
@@ -35,42 +36,43 @@ const AVOID_HEAD_CLEAR_POINTS = 4;
 const MIXED_ADJACENT_POINTS = 2;
 const SAME_GENDER_ADJACENT_PENALTY = -1;
 
-export function createEmptyAssignments(): SeatAssignments {
-  return Object.fromEntries(SEAT_IDS.map((seatId) => [seatId, null]));
+export function createEmptyAssignments(layout: SeatingLayout): SeatAssignments {
+  return Object.fromEntries(layout.seatIds.map((seatId) => [seatId, null]));
 }
 
-export function createInitialPlan(guestIds: string[]): Plan {
-  const assignments = createEmptyAssignments();
+export function createInitialPlan(guestIds: string[], layout: SeatingLayout): Plan {
+  const assignments = createEmptyAssignments(layout);
 
-  SEAT_IDS.forEach((seatId, index) => {
+  layout.seatIds.forEach((seatId, index) => {
     assignments[seatId] = guestIds[index] ?? null;
   });
 
   return {
     id: `plan-${Date.now()}`,
     assignments,
-    holdingGuestIds: guestIds.slice(SEAT_IDS.length)
+    holdingGuestIds: guestIds.slice(layout.seatIds.length)
   };
 }
 
 export function scorePlan(
   plan: Plan,
   guests: Guest[],
-  constraints: Constraint[]
+  constraints: Constraint[],
+  layout: SeatingLayout
 ): ScoreBreakdown {
   const guestsById = new Map(guests.map((guest) => [guest.id, guest]));
   const guestSeatIds = getGuestSeatIds(plan.assignments);
   const preferred = constraints
     .filter((constraint): constraint is ConstraintPair => isPairConstraint(constraint) && constraint.type === "prefer_adjacent")
-    .map((pair) => scorePreferencePair(pair, guestSeatIds));
+    .map((pair) => scorePreferencePair(pair, guestSeatIds, layout));
   const avoided = constraints
     .filter((constraint): constraint is ConstraintPair => isPairConstraint(constraint) && constraint.type === "avoid_adjacent")
-    .map((pair) => scoreAvoidPair(pair, guestSeatIds));
+    .map((pair) => scoreAvoidPair(pair, guestSeatIds, layout));
   const headSeat = constraints
     .filter(isHeadSeatConstraint)
-    .map((constraint) => scoreHeadSeatConstraint(constraint, guestSeatIds));
-  const tableGender = scoreTableGender(plan.assignments, guestsById);
-  const adjacencyGender = scoreAdjacentGender(plan.assignments, guestsById);
+    .map((constraint) => scoreHeadSeatConstraint(constraint, guestSeatIds, layout));
+  const tableGender = scoreTableGender(plan.assignments, guestsById, layout);
+  const adjacencyGender = scoreAdjacentGender(plan.assignments, guestsById, layout);
   const preferencePoints = sumPoints(preferred);
   const avoidPoints = sumPoints(avoided);
   const headSeatPoints = headSeat.reduce((total, result) => total + result.points, 0);
@@ -107,9 +109,10 @@ export function getGuestSeatIds(assignments: SeatAssignments): Map<string, numbe
 
 function scorePreferencePair(
   pair: ConstraintPair,
-  guestSeatIds: Map<string, number>
+  guestSeatIds: Map<string, number>,
+  layout: SeatingLayout
 ): PairScoreResult {
-  const proximity = getGuestSeatProximity(pair, guestSeatIds);
+  const proximity = getGuestSeatProximity(pair, guestSeatIds, layout);
   const strength: PairStrength = pair.strength ?? "medium";
 
   return {
@@ -122,9 +125,10 @@ function scorePreferencePair(
 
 function scoreAvoidPair(
   pair: ConstraintPair,
-  guestSeatIds: Map<string, number>
+  guestSeatIds: Map<string, number>,
+  layout: SeatingLayout
 ): PairScoreResult {
-  const proximity = getGuestSeatProximity(pair, guestSeatIds);
+  const proximity = getGuestSeatProximity(pair, guestSeatIds, layout);
   const adjacent = proximity !== "none";
 
   return {
@@ -137,24 +141,24 @@ function scoreAvoidPair(
 
 function getGuestSeatProximity(
   pair: ConstraintPair,
-  guestSeatIds: Map<string, number>
+  guestSeatIds: Map<string, number>,
+  layout: SeatingLayout
 ): SeatProximity {
   const seatAId = guestSeatIds.get(pair.guestAId);
   const seatBId = guestSeatIds.get(pair.guestBId);
 
-  if (seatAId === undefined || seatBId === undefined) {
-    return "none";
-  }
+  if (seatAId === undefined || seatBId === undefined) return "none";
 
-  return getSeatProximity(seatAId, seatBId);
+  return getSeatProximity(seatAId, seatBId, layout);
 }
 
 function scoreHeadSeatConstraint(
   constraint: HeadSeatConstraint,
-  guestSeatIds: Map<string, number>
+  guestSeatIds: Map<string, number>,
+  layout: SeatingLayout
 ): HeadSeatScoreResult {
   const seatId = guestSeatIds.get(constraint.guestId);
-  const atHead = seatId === undefined ? false : isHeadSeat(seatId);
+  const atHead = seatId === undefined ? false : isHeadSeat(seatId, layout);
   const satisfied =
     (constraint.type === "prefer_head" && atHead) ||
     (constraint.type === "avoid_head" && !atHead);
@@ -177,25 +181,21 @@ function getHeadSeatPoints(constraint: HeadSeatConstraint, atHead: boolean): num
 
 function scoreTableGender(
   assignments: SeatAssignments,
-  guestsById: Map<string, Guest>
+  guestsById: Map<string, Guest>,
+  layout: SeatingLayout
 ): TableGenderScore[] {
-  return ([1, 2] as const).map((tableId) => {
+  return layout.tableIds.map((tableId) => {
     let male = 0;
     let female = 0;
 
     for (const [seatId, guestId] of Object.entries(assignments)) {
-      const seat = SEATS_BY_ID.get(Number(seatId));
+      const seat = layout.seatsById.get(Number(seatId));
       const guest = guestId ? guestsById.get(guestId) : undefined;
 
-      if (seat?.tableId !== tableId || !guest) {
-        continue;
-      }
+      if (seat?.tableId !== tableId || !guest) continue;
 
-      if (guest.gender === "M") {
-        male += 1;
-      } else if (guest.gender === "F") {
-        female += 1;
-      }
+      if (guest.gender === "M") male += 1;
+      else if (guest.gender === "F") female += 1;
     }
 
     const known = male + female;
@@ -208,7 +208,8 @@ function scoreTableGender(
 
 function scoreAdjacentGender(
   assignments: SeatAssignments,
-  guestsById: Map<string, Guest>
+  guestsById: Map<string, Guest>,
+  layout: SeatingLayout
 ): {
   points: number;
   mixedAdjacentPairs: number;
@@ -218,18 +219,14 @@ function scoreAdjacentGender(
   let mixedAdjacentPairs = 0;
   let sameGenderAdjacentPairs = 0;
 
-  for (const [seatAId, neighbors] of ADJACENT_SEAT_IDS.entries()) {
+  for (const [seatAId, neighbors] of layout.adjacentSeatIds.entries()) {
     for (const seatBId of neighbors) {
-      if (seatAId >= seatBId) {
-        continue;
-      }
+      if (seatAId >= seatBId) continue;
 
       const genderA = getBinaryGender(assignments[seatAId], guestsById);
       const genderB = getBinaryGender(assignments[seatBId], guestsById);
 
-      if (!genderA || !genderB) {
-        continue;
-      }
+      if (!genderA || !genderB) continue;
 
       if (genderA === genderB) {
         sameGenderAdjacentPairs += 1;

@@ -27,11 +27,11 @@ export interface HeadSeatConstraint {
 
 export type Constraint = ConstraintPair | HeadSeatConstraint;
 
-export type SeatSide = "top" | "bottom" | "left-end" | "right-end";
+export type SeatSide = "top" | "bottom" | "left-end" | "right-end" | "circular";
 
 export interface Seat {
   id: number;
-  tableId: 1 | 2;
+  tableId: number;
   side: SeatSide;
   position: number;
 }
@@ -39,6 +39,40 @@ export interface Seat {
 export type SeatProximity = "left_right" | "opposite" | "end" | "diagonal" | "none";
 
 export type SeatAssignments = Record<number, string | null>;
+
+// --- Venue / table configuration ---
+
+export interface RectTableConfig {
+  kind: "rect";
+  id: number;
+  label?: string;
+  seatsPerSide: number;
+  leftEnd: boolean;
+  rightEnd: boolean;
+}
+
+export interface CircularTableConfig {
+  kind: "circular";
+  id: number;
+  label?: string;
+  seats: number;
+}
+
+export type TableConfig = RectTableConfig | CircularTableConfig;
+
+export interface VenueConfig {
+  tables: TableConfig[];
+}
+
+export interface SeatingLayout {
+  seats: Seat[];
+  seatIds: number[];
+  seatsById: Map<number, Seat>;
+  headSeatIds: number[];
+  adjacentSeatIds: Map<number, Set<number>>;
+  tableIds: number[];
+  tableConfigs: Map<number, TableConfig>;
+}
 
 export interface Plan {
   id: string;
@@ -61,7 +95,7 @@ export interface HeadSeatScoreResult {
 }
 
 export interface TableGenderScore {
-  tableId: 1 | 2;
+  tableId: number;
   male: number;
   female: number;
   points: number;

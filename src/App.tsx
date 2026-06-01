@@ -21,8 +21,8 @@ import {
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { createPlannerBackup, parsePlannerBackupJson, type PlannerData } from "./domain/backup";
 import { readFileText } from "./domain/file";
-import { SEAT_IDS, SEATS } from "./domain/seating";
-import { createInitialPlan, scorePlan } from "./domain/scoring";
+import { buildSeatingLayout } from "./domain/seating";
+import { createEmptyAssignments, createInitialPlan, scorePlan } from "./domain/scoring";
 import { DEFAULT_EFFORT, EFFORT_LEVELS, generatePlans, type ScoredPlan } from "./domain/solver";
 import { spreadsheetFileToGuestText } from "./domain/spreadsheet";
 import {
@@ -36,11 +36,15 @@ import {
   type Guest,
   type Plan,
   type SavedLayout,
-  type ScoreBreakdown
+  type ScoreBreakdown,
+  type SeatingLayout,
+  type TableConfig,
+  type VenueConfig
 } from "./domain/types";
+import { DEFAULT_VENUE_CONFIG } from "./domain/venueConfig";
 import { parseGuestText } from "./domain/parser";
 
-const STORAGE_KEY = "table-planner-state-v1";
+const STORAGE_KEY = "table-planner-state-v2";
 
 const PLACEHOLDER_GUESTS = Array.from({ length: 39 }, (_, index) => {
   const gender = index % 3 === 0 ? ", F" : index % 3 === 1 ? ", M" : "";
@@ -62,6 +66,8 @@ export function App() {
   const [effortLevel, setEffortLevel] = useState(DEFAULT_EFFORT);
   const [isShuffling, setIsShuffling] = useState(false);
   const [savedLayouts, setSavedLayouts] = useState<SavedLayout[]>([]);
+  const [venueConfig, setVenueConfig] = useState<VenueConfig>(DEFAULT_VENUE_CONFIG);
+  const [phase, setPhase] = useState<"setup" | "planning">("planning");
   const [leftPanelWidth, setLeftPanelWidth] = useState(310);
   const [isResizing, setIsResizing] = useState(false);
 
@@ -78,6 +84,7 @@ export function App() {
       setConstraints(parsed.constraints ?? []);
       setActivePlan(parsed.activePlan ?? null);
       setSavedLayouts(parsed.savedLayouts ?? []);
+      if (parsed.venueConfig) setVenueConfig(parsed.venueConfig);
       setSaveStatus("Loaded");
     } catch {
       setSaveStatus("Could not load saved plan");
@@ -91,6 +98,7 @@ export function App() {
     () => constraints.filter((constraint) => isValidConstraint(constraint, guestsById)),
     [constraints, guestsById]
   );
+  const layout = useMemo(() => buildSeatingLayout(venueConfig), [venueConfig]);
 
   // Auto-save 600ms after the last change. The cleanup cancels any pending
   // timer from a previous render, so rapid changes coalesce into one write.
@@ -98,7 +106,7 @@ export function App() {
   useEffect(() => {
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(() => {
-      const state: PlannerData = { guestText, constraints: validConstraints, activePlan, savedLayouts };
+      const state: PlannerData = { guestText, constraints: validConstraints, activePlan, savedLayouts, venueConfig };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       setSaveStatus(`Saved ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
     }, 600);
@@ -107,8 +115,8 @@ export function App() {
     };
   }, [guestText, validConstraints, activePlan, savedLayouts]);
   const activeScore = useMemo(
-    () => (activePlan ? scorePlan(activePlan, guests, validConstraints) : null),
-    [activePlan, guests, validConstraints]
+    () => (activePlan ? scorePlan(activePlan, guests, validConstraints, layout) : null),
+    [activePlan, guests, validConstraints, layout]
   );
   const seatedGuestIds = useMemo(() => {
     if (!activePlan) {
@@ -138,6 +146,7 @@ export function App() {
     const nextCandidates = generatePlans({
       guests,
       constraints: validConstraints,
+      layout,
       count: 6,
       attempts,
       improveIterations
@@ -278,7 +287,7 @@ export function App() {
   }
 
   function handleResetPlan() {
-    const nextPlan = createInitialPlan(guests.map((guest) => guest.id));
+    const nextPlan = createInitialPlan(guests.map((guest) => guest.id), layout);
     setActivePlan(nextPlan);
     setCandidates([]);
     setSaveStatus("Plan reset");
@@ -307,7 +316,7 @@ export function App() {
   }
 
   const genderCounts = countGenders(guests);
-  const hasTooManyGuests = guests.length > SEAT_IDS.length;
+  const hasTooManyGuests = guests.length > layout.seatIds.length;
   const hasSaveableData = Boolean(guestText.trim() || constraints.length > 0 || activePlan || savedLayouts.length > 0);
 
   return (
@@ -315,9 +324,12 @@ export function App() {
       <header className="top-bar">
         <div>
           <h1>Table Planner</h1>
-          <p>{guests.length} guests for {SEAT_IDS.length} seats</p>
+          <p>{guests.length} guests for {layout.seatIds.length} seats</p>
         </div>
         <div className="top-actions">
+          <button type="button" onClick={() => setPhase(phase === "setup" ? "planning" : "setup")}>
+            {phase === "setup" ? "← Back to plan" : "Table setup"}
+          </button>
           <label className="effort-control">
             <span>Effort</span>
             <input
@@ -360,7 +372,19 @@ export function App() {
         </div>
       </header>
 
-      <main className="workspace" style={{ "--left-panel-width": `${leftPanelWidth}px` } as React.CSSProperties}>
+      {phase === "setup" && (
+        <VenueSetup
+          config={venueConfig}
+          onConfirm={(nextConfig) => {
+            setVenueConfig(nextConfig);
+            setActivePlan(null);
+            setSavedLayouts([]);
+            setPhase("planning");
+          }}
+        />
+      )}
+
+      <main className="workspace" style={{ "--left-panel-width": `${leftPanelWidth}px`, display: phase === "setup" ? "none" : undefined } as React.CSSProperties}>
         <div
           className={`panel-resize-handle${isResizing ? " resizing" : ""}`}
           style={{ left: `calc(1.5rem + ${leftPanelWidth}px)` }}
@@ -431,7 +455,7 @@ export function App() {
                   <span>{genderCounts.unknown} unknown</span>
                 </div>
                 {hasTooManyGuests ? (
-                  <p className="warning-text">{guests.length - SEAT_IDS.length} guest(s) will start in holding.</p>
+                  <p className="warning-text">{guests.length - layout.seatIds.length} guest(s) will start in holding.</p>
                 ) : null}
                 {importError ? <p className="warning-text">{importError}</p> : null}
                 {importWarnings.map((warning) => (
@@ -498,6 +522,7 @@ export function App() {
             <div className="print-area">
               <TablePlan
                 plan={activePlan}
+                layout={layout}
                 guestsById={guestsById}
                 highlightedGuestId={highlightedGuestId}
                 onDragStart={setDraggedGuestId}
@@ -785,42 +810,128 @@ function HeadSeatEditor({ guests, constraints, onChange }: HeadSeatEditorProps) 
 
 interface TablePlanProps {
   plan: Plan;
+  layout: SeatingLayout;
   guestsById: Map<string, Guest>;
   highlightedGuestId: string | null;
   onDragStart: (guestId: string) => void;
   onDropIntoSeat: (seatId: number) => void;
 }
 
-function TablePlan({ plan, guestsById, highlightedGuestId, onDragStart, onDropIntoSeat }: TablePlanProps) {
+function TablePlan({ plan, layout, guestsById, highlightedGuestId, onDragStart, onDropIntoSeat }: TablePlanProps) {
   return (
     <div className="table-plan" aria-label="Seating layout">
-      {[1, 2].map((tableId) => (
-        <div className="table-block" key={tableId}>
-          <div className="table-label">Table {tableId}</div>
-          <div className="table-grid">
-            <div className="table-rectangle" />
-            {SEATS.filter((seat) => seat.tableId === tableId).map((seat) => {
-              const guestId = plan.assignments[seat.id];
-              const guest = guestId ? guestsById.get(guestId) : undefined;
+      {layout.tableIds.map((tableId) => {
+        const config = layout.tableConfigs.get(tableId)!;
+        const tableSeats = layout.seats.filter((s) => s.tableId === tableId);
+        const label = config.label ?? `Table ${tableId}`;
 
-              return (
-                <SeatCell
-                  key={seat.id}
-                  seatId={seat.id}
-                  side={seat.side}
-                  position={seat.position}
-                  guest={guest}
-                  occupied={Boolean(guestId)}
-                  highlighted={Boolean(guest && guest.id === highlightedGuestId)}
-                  onDragStart={onDragStart}
-                  onDropIntoSeat={onDropIntoSeat}
-                />
-              );
-            })}
+        if (config.kind === "circular") {
+          return (
+            <div className="table-block" key={tableId}>
+              <div className="table-label">{label}</div>
+              <CircularTableBlock
+                seats={tableSeats}
+                totalSeats={config.seats}
+                plan={plan}
+                guestsById={guestsById}
+                highlightedGuestId={highlightedGuestId}
+                onDragStart={onDragStart}
+                onDropIntoSeat={onDropIntoSeat}
+              />
+            </div>
+          );
+        }
+
+        const seatsPerSide = config.seatsPerSide;
+        const hasLeft = config.leftEnd;
+        const hasRight = config.rightEnd;
+        const colCount = seatsPerSide + (hasLeft ? 1 : 0) + (hasRight ? 1 : 0);
+        const sideColStart = hasLeft ? 2 : 1;
+        const gridTemplateColumns = [
+          hasLeft ? "4.5rem" : "",
+          `repeat(${seatsPerSide}, minmax(4.35rem, 1fr))`,
+          hasRight ? "4.5rem" : ""
+        ].filter(Boolean).join(" ");
+        const rectColEnd = sideColStart + seatsPerSide;
+
+        return (
+          <div className="table-block" key={tableId}>
+            <div className="table-label">{label}</div>
+            <div className="table-grid" style={{ gridTemplateColumns }}>
+              <div className="table-rectangle" style={{ gridColumn: `${sideColStart} / ${rectColEnd}`, gridRow: "2" }} />
+              {tableSeats.map((seat) => {
+                const guestId = plan.assignments[seat.id];
+                const guest = guestId ? guestsById.get(guestId) : undefined;
+
+                return (
+                  <SeatCell
+                    key={seat.id}
+                    seatId={seat.id}
+                    side={seat.side}
+                    position={seat.position}
+                    seatsPerSide={seatsPerSide}
+                    hasLeftEnd={hasLeft}
+                    guest={guest}
+                    occupied={Boolean(guestId)}
+                    highlighted={Boolean(guest && guest.id === highlightedGuestId)}
+                    onDragStart={onDragStart}
+                    onDropIntoSeat={onDropIntoSeat}
+                  />
+                );
+              })}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
+  );
+}
+
+interface CircularTableBlockProps {
+  seats: { id: number; position: number }[];
+  totalSeats: number;
+  plan: Plan;
+  guestsById: Map<string, Guest>;
+  highlightedGuestId: string | null;
+  onDragStart: (guestId: string) => void;
+  onDropIntoSeat: (seatId: number) => void;
+}
+
+function CircularTableBlock({ seats, totalSeats, plan, guestsById, highlightedGuestId, onDragStart, onDropIntoSeat }: CircularTableBlockProps) {
+  const size = 340;
+  const cx = size / 2;
+  const cy = size / 2;
+  const tableR = 55;
+  const seatR = size / 2 - 42;
+
+  return (
+    <svg width={size} height={size} className="circular-table-svg" viewBox={`0 0 ${size} ${size}`}>
+      <circle cx={cx} cy={cy} r={tableR} fill="white" stroke="#40484f" strokeWidth={2} />
+      {seats.map((seat) => {
+        const angle = (2 * Math.PI * seat.position) / totalSeats - Math.PI / 2;
+        const x = cx + seatR * Math.cos(angle);
+        const y = cy + seatR * Math.sin(angle);
+        const guestId = plan.assignments[seat.id];
+        const guest = guestId ? guestsById.get(guestId) : undefined;
+
+        return (
+          <foreignObject key={seat.id} x={x - 38} y={y - 30} width={76} height={60}>
+            <SeatCell
+              seatId={seat.id}
+              side="circular"
+              position={seat.position}
+              seatsPerSide={0}
+              hasLeftEnd={false}
+              guest={guest}
+              occupied={Boolean(guestId)}
+              highlighted={Boolean(guest && guest.id === highlightedGuestId)}
+              onDragStart={onDragStart}
+              onDropIntoSeat={onDropIntoSeat}
+            />
+          </foreignObject>
+        );
+      })}
+    </svg>
   );
 }
 
@@ -828,6 +939,8 @@ interface SeatCellProps {
   seatId: number;
   side: string;
   position: number;
+  seatsPerSide: number;
+  hasLeftEnd: boolean;
   guest?: Guest;
   occupied: boolean;
   highlighted: boolean;
@@ -835,8 +948,8 @@ interface SeatCellProps {
   onDropIntoSeat: (seatId: number) => void;
 }
 
-function SeatCell({ seatId, side, position, guest, occupied, highlighted, onDragStart, onDropIntoSeat }: SeatCellProps) {
-  const style = getSeatStyle(side, position);
+function SeatCell({ seatId, side, position, seatsPerSide, hasLeftEnd, guest, occupied, highlighted, onDragStart, onDropIntoSeat }: SeatCellProps) {
+  const style = getSeatStyle(side, position, seatsPerSide, hasLeftEnd);
 
   return (
     <div
@@ -1198,7 +1311,7 @@ function ScorePill({ score }: { score: number }) {
 function moveGuestToSeat(plan: Plan, guestId: string, seatId: number): Plan {
   const nextPlan = clonePlan(plan);
 
-  for (const assignedSeatId of SEAT_IDS) {
+  for (const assignedSeatId of Object.keys(nextPlan.assignments).map(Number)) {
     if (nextPlan.assignments[assignedSeatId] === guestId) {
       nextPlan.assignments[assignedSeatId] = null;
     }
@@ -1213,7 +1326,7 @@ function moveGuestToSeat(plan: Plan, guestId: string, seatId: number): Plan {
 function moveGuestToHolding(plan: Plan, guestId: string): Plan {
   const nextPlan = clonePlan(plan);
 
-  for (const seatId of SEAT_IDS) {
+  for (const seatId of Object.keys(nextPlan.assignments).map(Number)) {
     if (nextPlan.assignments[seatId] === guestId) {
       nextPlan.assignments[seatId] = null;
     }
@@ -1254,7 +1367,7 @@ function reconcilePlanForGuestIds(plan: Plan, guestIds: Set<string>): Plan | nul
   const nextPlan = clonePlan(plan);
   const assignedGuestIds = new Set<string>();
 
-  for (const seatId of SEAT_IDS) {
+  for (const seatId of Object.keys(nextPlan.assignments).map(Number)) {
     const guestId = nextPlan.assignments[seatId];
 
     if (!guestId || !guestIds.has(guestId)) {
@@ -1322,18 +1435,101 @@ function getGenderClass(guest: Guest): string {
   return "";
 }
 
-function getSeatStyle(side: string, position: number) {
-  if (side === "top") {
-    return { gridColumn: `${position + 2}`, gridRow: "1" };
+interface VenueSetupProps {
+  config: VenueConfig;
+  onConfirm: (config: VenueConfig) => void;
+}
+
+function VenueSetup({ config, onConfirm }: VenueSetupProps) {
+  const [tables, setTables] = useState<TableConfig[]>(config.tables);
+  let nextId = Math.max(0, ...tables.map((t) => t.id)) + 1;
+
+  function addRect() {
+    setTables([...tables, { kind: "rect", id: nextId++, label: `Table ${nextId - 1}`, seatsPerSide: 9, leftEnd: false, rightEnd: true }]);
   }
 
-  if (side === "bottom") {
-    return { gridColumn: `${position + 2}`, gridRow: "3" };
+  function addCircular() {
+    setTables([...tables, { kind: "circular", id: nextId++, label: `Table ${nextId - 1}`, seats: 8 }]);
   }
 
-  if (side === "left-end") {
-    return { gridColumn: "1", gridRow: "2" };
+  function removeTable(id: number) {
+    setTables(tables.filter((t) => t.id !== id));
   }
 
-  return { gridColumn: "11", gridRow: "2" };
+  function updateTable(updated: TableConfig) {
+    setTables(tables.map((t) => t.id === updated.id ? updated : t));
+  }
+
+  return (
+    <div className="venue-setup">
+      <h2>Table setup</h2>
+      <p className="venue-setup-hint">Changing the layout will clear the current plan and saved layouts.</p>
+      <div className="venue-setup-tables">
+        {tables.map((table) => (
+          <div className="venue-setup-table" key={table.id}>
+            <div className="venue-setup-table-header">
+              <input
+                className="venue-setup-label-input"
+                value={table.label ?? ""}
+                onChange={(e) => updateTable({ ...table, label: e.target.value })}
+                placeholder="Table name"
+              />
+              <span className="venue-setup-kind">{table.kind === "rect" ? "Long table" : "Circular"}</span>
+              <button type="button" onClick={() => removeTable(table.id)} aria-label="Remove table"><Trash2 size={14} /></button>
+            </div>
+            {table.kind === "rect" ? (
+              <div className="venue-setup-table-fields">
+                <label>
+                  Seats per side
+                  <input type="number" min={1} max={20} value={table.seatsPerSide}
+                    onChange={(e) => updateTable({ ...table, seatsPerSide: Math.max(1, Math.min(20, Number(e.target.value))) })} />
+                </label>
+                <label>
+                  <input type="checkbox" checked={table.leftEnd}
+                    onChange={(e) => updateTable({ ...table, leftEnd: e.target.checked })} />
+                  Head seat (left end)
+                </label>
+                <label>
+                  <input type="checkbox" checked={table.rightEnd}
+                    onChange={(e) => updateTable({ ...table, rightEnd: e.target.checked })} />
+                  Head seat (right end)
+                </label>
+              </div>
+            ) : (
+              <div className="venue-setup-table-fields">
+                <label>
+                  Seats
+                  <input type="number" min={3} max={30} value={table.seats}
+                    onChange={(e) => updateTable({ ...table, seats: Math.max(3, Math.min(30, Number(e.target.value))) })} />
+                </label>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="venue-setup-actions">
+        <button type="button" onClick={addRect}><Plus size={14} /> Long table</button>
+        <button type="button" onClick={addCircular}><Plus size={14} /> Circular table</button>
+        <button
+          type="button"
+          className="primary-button"
+          disabled={tables.length === 0}
+          onClick={() => onConfirm({ tables })}
+        >
+          Confirm layout →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function getSeatStyle(side: string, position: number, seatsPerSide: number, hasLeftEnd: boolean) {
+  const colOffset = hasLeftEnd ? 2 : 1;
+
+  if (side === "top") return { gridColumn: `${position + colOffset}`, gridRow: "1" };
+  if (side === "bottom") return { gridColumn: `${position + colOffset}`, gridRow: "3" };
+  if (side === "left-end") return { gridColumn: "1", gridRow: "2" };
+  if (side === "right-end") return { gridColumn: `${seatsPerSide + colOffset}`, gridRow: "2" };
+
+  return {};
 }

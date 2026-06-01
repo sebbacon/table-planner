@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { SEAT_IDS } from "./seating";
+import { buildSeatingLayout } from "./seating";
 import { generatePlans } from "./solver";
+import { DEFAULT_VENUE_CONFIG } from "./venueConfig";
 import type { Guest } from "./types";
 
 describe("generatePlans", () => {
   it("returns best-effort candidates for 39 guests", () => {
+    const layout = buildSeatingLayout(DEFAULT_VENUE_CONFIG);
     const guests: Guest[] = Array.from({ length: 39 }, (_, index) => ({
       id: `guest-${index + 1}`,
       name: `Guest ${index + 1}`,
@@ -13,6 +15,7 @@ describe("generatePlans", () => {
     const candidates = generatePlans({
       guests,
       constraints: [],
+      layout,
       count: 3,
       attempts: 8,
       improveIterations: 10,
@@ -20,7 +23,7 @@ describe("generatePlans", () => {
     });
 
     expect(candidates).toHaveLength(3);
-    expect(Object.values(candidates[0].plan.assignments).filter(Boolean)).toHaveLength(SEAT_IDS.length);
+    expect(Object.values(candidates[0].plan.assignments).filter(Boolean)).toHaveLength(layout.seatIds.length);
   });
 });
 

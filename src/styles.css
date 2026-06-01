@@ -408,7 +408,6 @@ p {
 .table-grid {
   display: grid;
   gap: 0.45rem;
-  grid-template-columns: 4.5rem repeat(9, minmax(4.35rem, 1fr)) 4.5rem;
   grid-template-rows: 5.4rem 4.6rem 5.4rem;
   position: relative;
 }
@@ -417,8 +416,11 @@ p {
   align-self: stretch;
   background: #ffffff;
   border: 2px solid #40484f;
-  grid-column: 2 / 11;
-  grid-row: 2;
+}
+
+.circular-table-svg {
+  display: block;
+  margin: 0 auto;
 }
 
 .seat-cell {
@@ -853,4 +855,85 @@ p {
   .guest-chip {
     box-shadow: none;
   }
+}
+
+/* Venue setup */
+.venue-setup {
+  max-width: 720px;
+  margin: 2rem auto;
+  padding: 0 1.5rem;
+}
+
+.venue-setup h2 {
+  font-size: 1.25rem;
+  margin-bottom: 0.25rem;
+}
+
+.venue-setup-hint {
+  color: #666;
+  font-size: 0.875rem;
+  margin-bottom: 1.5rem;
+}
+
+.venue-setup-tables {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.venue-setup-table {
+  border: 1px solid #d0d5db;
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.venue-setup-table-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.venue-setup-label-input {
+  flex: 1;
+  font-size: 0.9rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid #d0d5db;
+  border-radius: 4px;
+}
+
+.venue-setup-kind {
+  font-size: 0.8rem;
+  color: #666;
+  white-space: nowrap;
+}
+
+.venue-setup-table-fields {
+  display: flex;
+  gap: 1.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 0.875rem;
+}
+
+.venue-setup-table-fields label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.venue-setup-table-fields input[type="number"] {
+  width: 4rem;
+  padding: 0.2rem 0.4rem;
+  border: 1px solid #d0d5db;
+  border-radius: 4px;
+  font-size: 0.875rem;
+}
+
+.venue-setup-actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
 }

@@ -91,7 +91,7 @@ describe("App", () => {
   it("persists pair strength selection in state and to localStorage", async () => {
     const user = userEvent.setup();
     localStorage.setItem(
-      "table-planner-state-v1",
+      "table-planner-state-v2",
       JSON.stringify({
         guestText: "Jane Smith\nSam Jones",
         constraints: [
@@ -119,7 +119,7 @@ describe("App", () => {
     expect(medBtn).not.toHaveClass("active");
 
     await waitFor(() => {
-      const saved = JSON.parse(localStorage.getItem("table-planner-state-v1") ?? "{}");
+      const saved = JSON.parse(localStorage.getItem("table-planner-state-v2") ?? "{}");
       expect(saved.constraints[0].strength).toBe("high");
     }, { timeout: 2000 });
   });
@@ -127,7 +127,7 @@ describe("App", () => {
   it("saves guest gender edits without requiring a seating plan or dropping pairings", async () => {
     const user = userEvent.setup();
     localStorage.setItem(
-      "table-planner-state-v1",
+      "table-planner-state-v2",
       JSON.stringify({
         guestText: "Jane Smith\nSam Jones",
         constraints: [
@@ -155,7 +155,7 @@ describe("App", () => {
     });
 
     await waitFor(() => {
-      const saved = JSON.parse(localStorage.getItem("table-planner-state-v1") ?? "{}");
+      const saved = JSON.parse(localStorage.getItem("table-planner-state-v2") ?? "{}");
       expect(saved.guestText).toBe("Jane Smith, F\nSam Jones, M");
       expect(saved.constraints).toHaveLength(1);
       expect(saved.constraints[0]).toMatchObject({
@@ -221,8 +221,8 @@ describe("App", () => {
       activePlan: {
         id: "plan-1",
         assignments: {
-          1: "guest-1-jane-smith",
-          11: "guest-2-sam-jones"
+          19: "guest-1-jane-smith",
+          1: "guest-2-sam-jones"
         },
         holdingGuestIds: []
       }

@@ -1,10 +1,11 @@
-import type { Constraint, ConstraintType, PairStrength, Plan, SeatAssignments, SavedLayout } from "./types";
+import type { Constraint, ConstraintType, PairStrength, Plan, SeatAssignments, SavedLayout, VenueConfig } from "./types";
 
 export interface PlannerData {
   guestText: string;
   constraints: Constraint[];
   activePlan: Plan | null;
   savedLayouts?: SavedLayout[];
+  venueConfig?: VenueConfig;
 }
 
 export interface PlannerBackup extends PlannerData {
@@ -29,7 +30,8 @@ export function createPlannerBackup(
     guestText: data.guestText,
     constraints: data.constraints,
     activePlan: data.activePlan,
-    savedLayouts: data.savedLayouts
+    savedLayouts: data.savedLayouts,
+    venueConfig: data.venueConfig
   };
 }
 
@@ -60,7 +62,8 @@ export function parsePlannerBackupJson(input: string): PlannerData {
     activePlan: parsed.activePlan === null ? null : parsePlan(parsed.activePlan),
     savedLayouts: Array.isArray(parsed.savedLayouts)
       ? parsed.savedLayouts.map(parseSavedLayout)
-      : []
+      : [],
+    venueConfig: parseVenueConfig(parsed.venueConfig)
   };
 }
 
@@ -152,6 +155,40 @@ function parseSavedLayout(value: unknown): SavedLayout {
     plan: parsePlan(value.plan),
     scoreTotal: typeof value.scoreTotal === "number" ? value.scoreTotal : 0
   };
+}
+
+function parseVenueConfig(value: unknown): VenueConfig | undefined {
+  if (!isRecord(value) || !Array.isArray(value.tables)) return undefined;
+
+  try {
+    const tables = value.tables.map((t: unknown) => {
+      if (!isRecord(t) || typeof t.id !== "number") throw new Error();
+      if (t.kind === "rect") {
+        if (typeof t.seatsPerSide !== "number") throw new Error();
+        return {
+          kind: "rect" as const,
+          id: t.id,
+          label: typeof t.label === "string" ? t.label : undefined,
+          seatsPerSide: t.seatsPerSide,
+          leftEnd: Boolean(t.leftEnd),
+          rightEnd: Boolean(t.rightEnd)
+        };
+      }
+      if (t.kind === "circular") {
+        if (typeof t.seats !== "number") throw new Error();
+        return {
+          kind: "circular" as const,
+          id: t.id,
+          label: typeof t.label === "string" ? t.label : undefined,
+          seats: t.seats
+        };
+      }
+      throw new Error();
+    });
+    return { tables };
+  } catch {
+    return undefined;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
