@@ -461,6 +461,10 @@ p {
   white-space: nowrap;
 }
 
+.print-surname {
+  display: none;
+}
+
 .seat-cell .guest-chip {
   font-size: 0.66rem;
   gap: 0.24rem;
@@ -852,8 +856,40 @@ p {
     page-break-inside: avoid;
   }
 
-  .guest-chip {
+  .seat-number,
+  .guest-chip svg {
+    display: none;
+  }
+
+  .guest-chip,
+  .guest-chip.gender-m,
+  .guest-chip.gender-f {
+    background: #ffffff;
+    border-color: #9ca3af;
     box-shadow: none;
+    color: #000000;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.1rem;
+    min-height: 2.6rem;
+    overflow: visible;
+    padding: 0.25rem 0.2rem;
+    text-align: center;
+  }
+
+  .guest-chip span {
+    font-size: 0.72rem;
+    font-weight: 600;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+  }
+
+  .print-surname {
+    display: block;
+    font-size: 0.65rem;
+    font-weight: 400;
   }
 }
 

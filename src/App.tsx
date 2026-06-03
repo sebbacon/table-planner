@@ -976,6 +976,9 @@ function SeatCell({ seatId, side, position, seatsPerSide, hasLeftEnd, guest, occ
         >
           <GripVertical size={14} />
           <span>{getGuestLabel(guest.name)}</span>
+          {getGuestSurname(guest.name) && (
+            <span className="print-surname">{getGuestSurname(guest.name)}</span>
+          )}
         </button>
       ) : (
         <span className="empty-seat-label">Empty</span>
@@ -1429,6 +1432,11 @@ function countGenders(guests: Guest[]) {
 
 function getGuestLabel(name: string): string {
   return name.trim().split(/\s+/, 1)[0] || name;
+}
+
+function getGuestSurname(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  return parts.slice(1).join(" ");
 }
 
 function getGenderClass(guest: Guest): string {
