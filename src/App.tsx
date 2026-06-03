@@ -1110,11 +1110,19 @@ function PairResults({
         const guestA = guestsById.get(result.pair.guestAId);
         const guestB = guestsById.get(result.pair.guestBId);
 
+        const strength = result.pair.strength;
+        const badgeTone = strength === "high" ? "high" : strength === "medium" ? "mid" : strength === "low" ? "low" : null;
+
         return (
           <p key={result.pair.id}>
             <PairResultName guest={guestA} onGuestHighlight={onGuestHighlight} />
             <span aria-hidden="true"> / </span>
             <PairResultName guest={guestB} onGuestHighlight={onGuestHighlight} />
+            {badgeTone && (
+              <span className={`constraint-badge constraint-badge-${badgeTone}`}>
+                {strength}
+              </span>
+            )}
           </p>
         );
       })}
