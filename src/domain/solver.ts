@@ -1,7 +1,7 @@
 import { getSeatIdsForTable, getSeatProximity, isHeadSeat } from "./seating";
 import { createEmptyAssignments, getGuestSeatIds, scorePlan } from "./scoring";
 import { isHeadSeatConstraint, isPairConstraint } from "./types";
-import type { Constraint, ConstraintPair, Guest, Plan, ScoreBreakdown, SeatingLayout, SeatAssignments } from "./types";
+import type { Constraint, ConstraintPair, Guest, Plan, ScoreBreakdown, SeatingLayout, SeatAssignments, SeatProximity, PairStrength } from "./types";
 
 export interface ScoredPlan {
   plan: Plan;
@@ -150,6 +150,34 @@ function partitionGuestsByTable(
   }
 
   const strengthWeight: Record<string, number> = { high: 3, medium: 2, low: 1 };
+
+  // Return the table that constraint partners of these guests are already on,
+  // weighted by strength. Returns null if no pull or pulled table is full.
+  function pullTable(guestIdsToPlace: string[]): number | null {
+    const pull = new Map<number, number>(tableIds.map((id) => [id, 0]));
+    for (const guestId of guestIdsToPlace) {
+      for (const p of preferPairs) {
+        const partnerId = p.guestAId === guestId ? p.guestBId : p.guestBId === guestId ? p.guestAId : null;
+        if (!partnerId) continue;
+        const partnerTable = tableOf.get(partnerId);
+        if (partnerTable === undefined) continue;
+        pull.set(partnerTable, (pull.get(partnerTable) ?? 0) + (strengthWeight[p.strength ?? "medium"] ?? 2));
+      }
+    }
+    let bestTable: number | null = null;
+    let bestPull = 0;
+    for (const [tableId, p] of pull.entries()) {
+      if (p > bestPull) {
+        const idx = tableIds.indexOf(tableId);
+        if ((counts.get(tableId) ?? 0) < caps[idx]) {
+          bestPull = p;
+          bestTable = tableId;
+        }
+      }
+    }
+    return bestTable;
+  }
+
   const sortedPairs = [...preferPairs].sort(
     (a, b) => (strengthWeight[b.strength ?? "medium"] ?? 2) - (strengthWeight[a.strength ?? "medium"] ?? 2)
   );
@@ -165,7 +193,8 @@ function partitionGuestsByTable(
     } else if (bTable !== undefined) {
       tryAssign(pair.guestAId, bTable);
     } else {
-      const preferred = smallestTable();
+      // Pull toward the table that already has this pair's constraint partners
+      const preferred = pullTable([pair.guestAId, pair.guestBId]) ?? smallestTable();
       if (!tryAssign(pair.guestAId, preferred)) {
         const fallback = tableIds.find((id) => id !== preferred) ?? preferred;
         tryAssign(pair.guestAId, fallback);
@@ -243,12 +272,21 @@ function improvePlan(
   const kickThreshold = Math.max(50, Math.floor(iterations * 0.10));
   let noImprovementCount = 0;
 
+  // Guests in high-strength pairs: their table assignment comes from the
+  // partition phase and should not be disrupted by the improvement phase.
+  const highStrengthGuestIds = new Set(
+    preferPairs.filter((p) => p.strength === "high").flatMap((p) => [p.guestAId, p.guestBId])
+  );
+
   for (let index = 0; index < iterations; index += 1) {
     if (noImprovementCount >= kickThreshold) {
       for (let k = 0; k < 4; k += 1) {
         const a = randomItem(swappableSeatIds, rng);
         const b = randomItem(swappableSeatIds, rng);
-        if (a !== b && isHeadSwapAllowed(a, b, plan.assignments, preferHeadIds, avoidHeadIds, layout)) {
+        if (a !== b
+          && isHeadSwapAllowed(a, b, plan.assignments, preferHeadIds, avoidHeadIds, layout)
+          && isTableSwapAllowed(a, b, plan.assignments, highStrengthGuestIds, layout)
+        ) {
           swapAssignments(plan.assignments, a, b);
         }
       }
@@ -273,6 +311,7 @@ function improvePlan(
 
     if (seatAId === seatBId) continue;
     if (!isHeadSwapAllowed(seatAId, seatBId, plan.assignments, preferHeadIds, avoidHeadIds, layout)) continue;
+    if (!isTableSwapAllowed(seatAId, seatBId, plan.assignments, highStrengthGuestIds, layout)) continue;
 
     swapAssignments(plan.assignments, seatAId, seatBId);
     const nextScore = scorePlan(plan, guests, constraints, layout).total;
@@ -325,12 +364,8 @@ function findGuidedSwap(
   const anchorSeatId = guestSeatIds.get(anchorId);
   if (moverSeatId === undefined || anchorSeatId === undefined) return null;
 
-  const targetSeats = layout.seatIds.filter((seatId) => {
-    const proximity = getSeatProximity(anchorSeatId, seatId, layout);
-    if (strength === "high") return proximity === "left_right" || proximity === "end";
-    if (strength === "medium") return proximity === "left_right" || proximity === "end" || proximity === "opposite";
-    return proximity !== "none";
-  });
+  const currentMoverProximity = getSeatProximity(moverSeatId, anchorSeatId, layout);
+  const targetSeats = getBestAvailableTargetSeats(anchorSeatId, currentMoverProximity, strength, layout);
 
   if (targetSeats.length === 0) return null;
 
@@ -339,6 +374,53 @@ function findGuidedSwap(
   if (!isHeadSwapAllowed(moverSeatId, targetSeatId, plan.assignments, preferHeadIds, avoidHeadIds, layout)) return null;
 
   return { seatAId: moverSeatId, seatBId: targetSeatId };
+}
+
+function getBestAvailableTargetSeats(
+  anchorSeatId: number,
+  currentMoverProximity: SeatProximity,
+  strength: PairStrength,
+  layout: SeatingLayout
+): number[] {
+  const tiers: SeatProximity[][] =
+    strength === "high"
+      ? [["left_right", "end"], ["opposite"], ["diagonal"]]
+      : strength === "medium"
+      ? [["left_right", "end", "opposite"], ["diagonal"]]
+      : [["left_right", "end", "opposite", "diagonal"]];
+
+  // Only target tiers strictly better than where the mover currently sits
+  const currentTierIdx = tiers.findIndex((tier) => tier.includes(currentMoverProximity));
+  const candidateTiers = currentTierIdx === -1 ? tiers : tiers.slice(0, currentTierIdx);
+
+  for (const tier of candidateTiers) {
+    const seats = layout.seatIds.filter((seatId) =>
+      tier.includes(getSeatProximity(anchorSeatId, seatId, layout))
+    );
+    if (seats.length > 0) return seats;
+  }
+
+  return [];
+}
+
+// Prevent high-strength cluster members from crossing tables during improvement.
+// Their table assignment is determined by the partition phase and should be stable.
+function isTableSwapAllowed(
+  seatAId: number,
+  seatBId: number,
+  assignments: SeatAssignments,
+  highStrengthGuestIds: Set<string>,
+  layout: SeatingLayout
+): boolean {
+  if (highStrengthGuestIds.size === 0) return true;
+  const seatA = layout.seatsById.get(seatAId);
+  const seatB = layout.seatsById.get(seatBId);
+  if (!seatA || !seatB || seatA.tableId === seatB.tableId) return true;
+  const guestA = assignments[seatAId];
+  const guestB = assignments[seatBId];
+  if (guestA && highStrengthGuestIds.has(guestA)) return false;
+  if (guestB && highStrengthGuestIds.has(guestB)) return false;
+  return true;
 }
 
 function isHeadSwapAllowed(
