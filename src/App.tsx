@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { createPlannerBackup, parsePlannerBackupJson, type PlannerData } from "./domain/backup";
+import { analyzeConstraints, type ConstraintAnalysis } from "./domain/constraintAnalysis";
 import { readFileText } from "./domain/file";
 import { buildSeatingLayout } from "./domain/seating";
 import { createEmptyAssignments, createInitialPlan, scorePlan } from "./domain/scoring";
@@ -117,6 +118,10 @@ export function App() {
   const activeScore = useMemo(
     () => (activePlan ? scorePlan(activePlan, guests, validConstraints, layout) : null),
     [activePlan, guests, validConstraints, layout]
+  );
+  const constraintAnalysis = useMemo(
+    () => analyzeConstraints(guests, validConstraints),
+    [guests, validConstraints]
   );
   const seatedGuestIds = useMemo(() => {
     if (!activePlan) {
@@ -499,6 +504,12 @@ export function App() {
               setSaveStatus("Constraints changed");
             }}
           />
+
+          <ConstraintAnalysisPanel
+            analysis={constraintAnalysis}
+            guestsById={guestsById}
+            onGuestHighlight={setHighlightedGuestId}
+          />
         </aside>
 
         <section className="planner-surface">
@@ -571,6 +582,79 @@ export function App() {
         </aside>
       </main>
     </div>
+  );
+}
+
+function ConstraintAnalysisPanel({
+  analysis,
+  guestsById,
+  onGuestHighlight,
+}: {
+  analysis: ConstraintAnalysis;
+  guestsById: Map<string, Guest>;
+  onGuestHighlight: (guestId: string | null) => void;
+}) {
+  if (!analysis.hasAnyIssue) return null;
+
+  return (
+    <section className="panel-section constraint-analysis-panel">
+      <div className="section-heading">
+        <h2>Constraint Conflicts</h2>
+        <AlertTriangle size={15} className="conflict-icon" />
+      </div>
+
+      {analysis.overloadedGuests.map((overload) => {
+        const guest = guestsById.get(overload.guestId);
+        if (!guest) return null;
+        const badgeTone = overload.strength === "high" ? "high" : "mid";
+        return (
+          <div key={overload.guestId} className="analysis-warning">
+            <p className="analysis-warning-title">
+              <PairResultName guest={guest} onGuestHighlight={onGuestHighlight} />
+              {" "}has {overload.constraintCount}{" "}
+              <span className={`constraint-badge constraint-badge-${badgeTone}`}>{overload.strength}</span>
+              {" "}constraints — at most {overload.maxSatisfiable} can be satisfied
+            </p>
+            <div className="analysis-partner-list">
+              {overload.pairs.map((pair) => {
+                const otherId = pair.guestAId === overload.guestId ? pair.guestBId : pair.guestAId;
+                const other = guestsById.get(otherId);
+                const strength = pair.strength ?? "medium";
+                const tone = strength === "high" ? "high" : strength === "medium" ? "mid" : "low";
+                return (
+                  <span key={pair.id} className="analysis-partner-chip">
+                    <PairResultName guest={other} onGuestHighlight={onGuestHighlight} />
+                    <span className={`constraint-badge constraint-badge-${tone}`}>{strength}</span>
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+
+      {analysis.crossClusterPairs.length > 0 && (
+        <div className="analysis-warning">
+          <p className="analysis-warning-title">
+            At-risk pairs — these guests belong to competing high-priority groups and will likely end up at different tables:
+          </p>
+          {analysis.crossClusterPairs.map(({ pair }) => {
+            const guestA = guestsById.get(pair.guestAId);
+            const guestB = guestsById.get(pair.guestBId);
+            const strength = pair.strength ?? "medium";
+            const tone = strength === "high" ? "high" : strength === "medium" ? "mid" : "low";
+            return (
+              <p key={pair.id} className="analysis-cross-pair">
+                <PairResultName guest={guestA} onGuestHighlight={onGuestHighlight} />
+                <span aria-hidden="true"> / </span>
+                <PairResultName guest={guestB} onGuestHighlight={onGuestHighlight} />
+                <span className={`constraint-badge constraint-badge-${tone}`}>{strength}</span>
+              </p>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
 
