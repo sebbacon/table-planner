@@ -353,7 +353,17 @@ function findGuidedSwap(
 
   if (unsatisfied.length === 0) return null;
 
-  const pair = randomItem(unsatisfied, rng);
+  // Weight selection by strength so high pairs get proportionally more guided attempts.
+  const strengthWeight: Record<string, number> = { high: 9, medium: 3, low: 1 };
+  const weights = unsatisfied.map((p) => strengthWeight[p.strength ?? "medium"] ?? 3);
+  const totalWeight = weights.reduce((s, w) => s + w, 0);
+  let pick = rng() * totalWeight;
+  let pairIndex = 0;
+  for (let i = 0; i < weights.length; i++) {
+    pick -= weights[i];
+    if (pick <= 0) { pairIndex = i; break; }
+  }
+  const pair = unsatisfied[pairIndex];
   const strength = pair.strength ?? "medium";
 
   const [moverId, anchorId] = rng() < 0.5
