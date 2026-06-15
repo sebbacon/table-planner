@@ -28,12 +28,15 @@ Changing the layout clears any existing plan and saved layouts.
 Click **Edit** in the Guests panel and type one guest per line:
 
 ```
-Jane Smith, F
-Sam Jones, M
-Alex Lee
+Jane Smith, Bride
+Sam Jones, Groom
+Alex Lee, Bride, Younger
+Pat Morgan
 ```
 
-The gender suffix (`F`, `M`, or `Other`) is optional but used for gender-balance tie breaker scoring if you think that sort of thing matters. You can also **Upload** a CSV or Excel spreadsheet — the first column is treated as the name, the second (if present) as gender.
+Group labels are optional. Each guest can have zero, one, or several comma-separated groups after their name. The solver uses groups as a secondary tiebreaker: it tries to avoid seating two guests from the same group next to each other, while always prioritising explicit constraints first.
+
+You can also **Upload** a CSV or Excel spreadsheet — the name column is detected automatically, and a `group`, `category`, `dimension`, `gender`, or `sex` column (if present) is used as the group label.
 
 ### 3. Add constraints
 
@@ -64,7 +67,7 @@ The **Score** panel breaks down the active plan:
 - Good pairs met vs. total
 - Bad adjacencies
 - Head seat constraints satisfied
-- Gender balance points
+- Group points (same-group adjacencies avoided)
 
 Hover over a guest name to highlight their seat in the layout. Drag guest chips to swap seats manually, or drag someone to the **Holding Area** to leave their seat empty.
 
