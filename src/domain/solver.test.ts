@@ -10,7 +10,7 @@ describe("generatePlans", () => {
     const guests: Guest[] = Array.from({ length: 39 }, (_, index) => ({
       id: `guest-${index + 1}`,
       name: `Guest ${index + 1}`,
-      gender: index % 2 === 0 ? "F" : "M"
+      groups: index % 2 === 0 ? ["Bride"] : ["Groom"]
     }));
     const candidates = generatePlans({
       guests,

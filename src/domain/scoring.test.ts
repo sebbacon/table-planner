@@ -16,10 +16,10 @@ const t1 = {
 };
 
 const guests: Guest[] = [
-  { id: "a", name: "Alice", gender: "F" },
-  { id: "b", name: "Ben", gender: "M" },
-  { id: "c", name: "Casey", gender: "Unknown" },
-  { id: "d", name: "Drew", gender: "Other" }
+  { id: "a", name: "Alice", groups: ["Bride"] },
+  { id: "b", name: "Ben", groups: ["Groom"] },
+  { id: "c", name: "Casey", groups: [] },
+  { id: "d", name: "Drew", groups: [] }
 ];
 
 describe("scorePlan", () => {
@@ -124,12 +124,35 @@ describe("scorePlan", () => {
     expect(score.headSeatPoints).toBe(-36);
   });
 
-  it("ignores unknown and other gender values for gender balance scoring", () => {
+  it("penalizes same-group adjacent pairs", () => {
+    const sameGroupGuests: Guest[] = [
+      { id: "a", name: "Alice", groups: ["Bride"] },
+      { id: "b", name: "Ben", groups: ["Bride"] },
+    ];
+    const plan = planWith({ [t1.top(0)]: "a", [t1.top(1)]: "b" });
+    const score = scorePlan(plan, sameGroupGuests, [], layout);
+
+    expect(score.sameGroupAdjacentPairs).toBe(1);
+    expect(score.groupPoints).toBe(-1);
+  });
+
+  it("applies no group penalty when guests have no groups", () => {
     const plan = planWith({ [t1.top(0)]: "c", [t1.top(1)]: "d" });
     const score = scorePlan(plan, guests, [], layout);
 
-    expect(score.tableGender[0]).toMatchObject({ male: 0, female: 0, points: 0 });
-    expect(score.genderPoints).toBe(0);
+    expect(score.sameGroupAdjacentPairs).toBe(0);
+    expect(score.groupPoints).toBe(0);
+  });
+
+  it("penalizes once per shared group value for multi-group guests", () => {
+    const multiGroupGuests: Guest[] = [
+      { id: "a", name: "Alice", groups: ["Bride", "Young"] },
+      { id: "b", name: "Ben", groups: ["Bride", "Young"] },
+    ];
+    const plan = planWith({ [t1.top(0)]: "a", [t1.top(1)]: "b" });
+    const score = scorePlan(plan, multiGroupGuests, [], layout);
+
+    expect(score.groupPoints).toBe(-2);
   });
 });
 

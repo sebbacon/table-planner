@@ -2,14 +2,14 @@ import { describe, expect, it } from "vitest";
 import { parseGuestText } from "./parser";
 
 describe("parseGuestText", () => {
-  it("parses one guest per line with optional gender labels", () => {
-    const result = parseGuestText("Jane Smith, F\nSam Jones, male\nAlex Lee, Other\nPat Morgan");
+  it("parses one guest per line with optional group labels", () => {
+    const result = parseGuestText("Jane Smith, Bride\nSam Jones, Groom\nAlex Lee, Bride, Younger\nPat Morgan");
 
-    expect(result.guests.map((guest) => [guest.name, guest.gender])).toEqual([
-      ["Jane Smith", "F"],
-      ["Sam Jones", "M"],
-      ["Alex Lee", "Other"],
-      ["Pat Morgan", "Unknown"]
+    expect(result.guests.map((guest) => [guest.name, guest.groups])).toEqual([
+      ["Jane Smith", ["Bride"]],
+      ["Sam Jones", ["Groom"]],
+      ["Alex Lee", ["Bride", "Younger"]],
+      ["Pat Morgan", []]
     ]);
   });
 

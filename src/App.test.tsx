@@ -29,7 +29,7 @@ describe("App", () => {
     render(<App />);
 
     await user.click(screen.getByRole("button", { name: /^edit$/i }));
-    await user.type(screen.getByLabelText("Guest list"), "Jane Smith, F\nSam Jones, M");
+    await user.type(screen.getByLabelText("Guest list"), "Jane Smith, Bride\nSam Jones, Groom");
     await user.click(screen.getByRole("button", { name: /reset/i }));
 
     const janeLabel = screen.getByRole("button", { name: /jane/i });
@@ -38,8 +38,8 @@ describe("App", () => {
     expect(janeLabel).toBeInTheDocument();
     expect(samLabel).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /jane smith/i })).not.toBeInTheDocument();
-    expect(janeLabel).toHaveClass("gender-f");
-    expect(samLabel).toHaveClass("gender-m");
+    expect(janeLabel.className).toMatch(/\bgroup-\d\b/);
+    expect(samLabel.className).toMatch(/\bgroup-\d\b/);
   });
 
   it("imports guests from an uploaded CSV spreadsheet", async () => {
@@ -124,7 +124,7 @@ describe("App", () => {
     }, { timeout: 2000 });
   });
 
-  it("saves guest gender edits without requiring a seating plan or dropping pairings", async () => {
+  it("saves guest text edits without requiring a seating plan or dropping pairings", async () => {
     const user = userEvent.setup();
     localStorage.setItem(
       "table-planner-state-v2",

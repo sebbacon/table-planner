@@ -48,8 +48,8 @@ import { parseGuestText } from "./domain/parser";
 const STORAGE_KEY = "table-planner-state-v2";
 
 const PLACEHOLDER_GUESTS = Array.from({ length: 39 }, (_, index) => {
-  const gender = index % 3 === 0 ? ", F" : index % 3 === 1 ? ", M" : "";
-  return `Guest ${index + 1}${gender}`;
+  const group = index % 3 === 0 ? ", Bride" : index % 3 === 1 ? ", Groom" : "";
+  return `Guest ${index + 1}${group}`;
 }).join("\n");
 
 export function App() {
@@ -320,7 +320,6 @@ export function App() {
     setSaveStatus("Plan edited");
   }
 
-  const genderCounts = countGenders(guests);
   const hasTooManyGuests = guests.length > layout.seatIds.length;
   const hasSaveableData = Boolean(guestText.trim() || constraints.length > 0 || activePlan || savedLayouts.length > 0);
 
@@ -448,17 +447,11 @@ export function App() {
                     className="guest-input"
                     value={guestText}
                     onChange={(event) => handleGuestTextChange(event.target.value)}
-                    placeholder={"Jane Smith, F\nSam Jones, M\nAlex Lee, Other\nPat Morgan"}
+                    placeholder={"Jane Smith, Bride\nSam Jones, Groom\nAlex Lee, Bride, Younger\nPat Morgan"}
                   />
                 ) : (
                   <GuestList guests={guests} constraints={validConstraints} onGuestHighlight={setHighlightedGuestId} />
                 )}
-                <div className="guest-meta">
-                  <span>{genderCounts.male} M</span>
-                  <span>{genderCounts.female} F</span>
-                  <span>{genderCounts.other} Other</span>
-                  <span>{genderCounts.unknown} unknown</span>
-                </div>
                 {hasTooManyGuests ? (
                   <p className="warning-text">{guests.length - layout.seatIds.length} guest(s) will start in holding.</p>
                 ) : null}
@@ -1053,10 +1046,10 @@ function SeatCell({ seatId, side, position, seatsPerSide, hasLeftEnd, guest, occ
       {guest ? (
         <button
           type="button"
-          className={`guest-chip ${getGenderClass(guest)}${highlighted ? " highlighted" : ""}`}
+          className={`guest-chip ${getGroupClass(guest)}${highlighted ? " highlighted" : ""}`}
           draggable
           onDragStart={() => onDragStart(guest.id)}
-          title={`${guest.name}${guest.gender !== "Unknown" ? `, ${guest.gender}` : ""}`}
+          title={`${guest.name}${guest.groups.length > 0 ? `, ${guest.groups.join(", ")}` : ""}`}
         >
           <GripVertical size={14} />
           <span>{getGuestLabel(guest.name)}</span>
@@ -1097,12 +1090,12 @@ function HoldingArea({ guestIds, guestsById, highlightedGuestId, onDragStart, on
 
           return guest ? (
             <button
-              className={`guest-chip holding-chip ${getGenderClass(guest)}${guest.id === highlightedGuestId ? " highlighted" : ""}`}
+              className={`guest-chip holding-chip ${getGroupClass(guest)}${guest.id === highlightedGuestId ? " highlighted" : ""}`}
               type="button"
               draggable
               onDragStart={() => onDragStart(guest.id)}
               key={guest.id}
-              title={`${guest.name}${guest.gender !== "Unknown" ? `, ${guest.gender}` : ""}`}
+              title={`${guest.name}${guest.groups.length > 0 ? `, ${guest.groups.join(", ")}` : ""}`}
             >
               <GripVertical size={14} />
               <span>{getGuestLabel(guest.name)}</span>
@@ -1144,16 +1137,8 @@ function ScorePanel({ score, guestsById, onGuestHighlight }: ScorePanelProps) {
         <Metric label="Good pairs met" value={`${score.preferred.length - missedGood}/${score.preferred.length}`} />
         <Metric label="Bad adjacencies" value={String(badAdjacent)} tone={badAdjacent ? "bad" : "good"} />
         <Metric label="Head constraints" value={`${score.headSeat.length - missedHeadSeat}/${score.headSeat.length}`} tone={missedHeadSeat ? "bad" : "good"} />
-        <Metric label="Gender points" value={String(score.genderPoints)} />
-        <Metric label="Mixed adjacencies" value={String(score.mixedAdjacentPairs)} />
-      </div>
-      <div className="table-balance">
-        {score.tableGender.map((table) => (
-          <div key={table.tableId}>
-            <span>Table {table.tableId}</span>
-            <strong>{table.male} M / {table.female} F</strong>
-          </div>
-        ))}
+        <Metric label="Group points" value={String(score.groupPoints)} />
+        <Metric label="Same-group adjacencies" value={String(score.sameGroupAdjacentPairs)} tone={score.sameGroupAdjacentPairs ? "bad" : "good"} />
       </div>
       <PairResults
         title="Missed good pairs"
@@ -1495,25 +1480,6 @@ function clonePlan(plan: Plan): Plan {
   };
 }
 
-function countGenders(guests: Guest[]) {
-  return guests.reduce(
-    (counts, guest) => {
-      if (guest.gender === "M") {
-        counts.male += 1;
-      } else if (guest.gender === "F") {
-        counts.female += 1;
-      } else if (guest.gender === "Other") {
-        counts.other += 1;
-      } else {
-        counts.unknown += 1;
-      }
-
-      return counts;
-    },
-    { male: 0, female: 0, other: 0, unknown: 0 }
-  );
-}
-
 function getGuestLabel(name: string): string {
   return name.trim().split(/\s+/, 1)[0] || name;
 }
@@ -1523,16 +1489,15 @@ function getGuestSurname(name: string): string {
   return parts.slice(1).join(" ");
 }
 
-function getGenderClass(guest: Guest): string {
-  if (guest.gender === "M") {
-    return "gender-m";
-  }
+const GROUP_CLASS_COUNT = 6;
 
-  if (guest.gender === "F") {
-    return "gender-f";
+function getGroupClass(guest: Guest): string {
+  if (guest.groups.length === 0) return "";
+  let hash = 0;
+  for (let i = 0; i < guest.groups[0].length; i++) {
+    hash = (hash * 31 + guest.groups[0].charCodeAt(i)) >>> 0;
   }
-
-  return "";
+  return `group-${(hash % GROUP_CLASS_COUNT) + 1}`;
 }
 
 interface VenueSetupProps {

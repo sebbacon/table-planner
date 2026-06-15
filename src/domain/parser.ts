@@ -1,21 +1,9 @@
-import type { Gender, Guest } from "./types";
+import type { Guest } from "./types";
 
 export interface GuestParseResult {
   guests: Guest[];
   warnings: string[];
 }
-
-const GENDER_ALIASES: Record<string, Gender> = {
-  m: "M",
-  male: "M",
-  f: "F",
-  female: "F",
-  o: "Other",
-  other: "Other",
-  nonbinary: "Other",
-  "non-binary": "Other",
-  nb: "Other"
-};
 
 export function parseGuestText(input: string): GuestParseResult {
   const warnings: string[] = [];
@@ -25,7 +13,7 @@ export function parseGuestText(input: string): GuestParseResult {
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line, index) => {
-      const { name, gender } = parseGuestLine(line);
+      const { name, groups } = parseGuestLine(line);
       const normalizedName = name.toLocaleLowerCase();
       const seenCount = seenNames.get(normalizedName) ?? 0;
       seenNames.set(normalizedName, seenCount + 1);
@@ -37,31 +25,26 @@ export function parseGuestText(input: string): GuestParseResult {
       return {
         id: `guest-${index + 1}-${slugify(name)}`,
         name,
-        gender
+        groups
       };
     });
 
   return { guests, warnings };
 }
 
-function parseGuestLine(line: string): { name: string; gender: Gender } {
+function parseGuestLine(line: string): { name: string; groups: string[] } {
   const parts = line
     .split(",")
     .map((part) => part.trim())
     .filter(Boolean);
-  const maybeGender = parts.length > 1 ? parts[parts.length - 1].toLocaleLowerCase() : "";
-  const gender = GENDER_ALIASES[maybeGender];
 
-  if (gender) {
-    return {
-      name: parts.slice(0, -1).join(", ").trim() || line,
-      gender
-    };
+  if (parts.length <= 1) {
+    return { name: line.trim(), groups: [] };
   }
 
   return {
-    name: line,
-    gender: "Unknown"
+    name: parts[0],
+    groups: parts.slice(1)
   };
 }
 

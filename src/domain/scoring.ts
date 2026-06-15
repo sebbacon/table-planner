@@ -2,7 +2,6 @@ import { getSeatProximity, isHeadSeat } from "./seating";
 import type {
   Constraint,
   ConstraintPair,
-  Gender,
   Guest,
   HeadSeatConstraint,
   HeadSeatScoreResult,
@@ -12,8 +11,7 @@ import type {
   ScoreBreakdown,
   SeatingLayout,
   SeatAssignments,
-  SeatProximity,
-  TableGenderScore
+  SeatProximity
 } from "./types";
 import { isHeadSeatConstraint, isPairConstraint } from "./types";
 
@@ -33,8 +31,7 @@ const AVOID_CLEAR_POINTS = 4;
 const PREFER_HEAD_POINTS = 36;
 const AVOID_HEAD_PENALTY = -36;
 const AVOID_HEAD_CLEAR_POINTS = 4;
-const MIXED_ADJACENT_POINTS = 2;
-const SAME_GENDER_ADJACENT_PENALTY = -1;
+const SAME_GROUP_ADJACENT_PENALTY = -1;
 
 export function createEmptyAssignments(layout: SeatingLayout): SeatAssignments {
   return Object.fromEntries(layout.seatIds.map((seatId) => [seatId, null]));
@@ -71,27 +68,24 @@ export function scorePlan(
   const headSeat = constraints
     .filter(isHeadSeatConstraint)
     .map((constraint) => scoreHeadSeatConstraint(constraint, guestSeatIds, layout));
-  const tableGender = scoreTableGender(plan.assignments, guestsById, layout);
-  const adjacencyGender = scoreAdjacentGender(plan.assignments, guestsById, layout);
+  const adjacencyGroup = scoreAdjacentGroup(plan.assignments, guestsById, layout);
   const preferencePoints = sumPoints(preferred);
   const avoidPoints = sumPoints(avoided);
   const headSeatPoints = headSeat.reduce((total, result) => total + result.points, 0);
-  const genderPoints =
-    tableGender.reduce((total, result) => total + result.points, 0) +
-    adjacencyGender.points;
+  const constraintPoints = preferencePoints + avoidPoints + headSeatPoints;
+  const groupPoints = adjacencyGroup.points;
 
   return {
-    total: preferencePoints + avoidPoints + headSeatPoints + genderPoints,
+    total: constraintPoints + groupPoints,
+    constraintPoints,
     preferencePoints,
     avoidPoints,
     headSeatPoints,
-    genderPoints,
+    groupPoints,
     preferred,
     avoided,
     headSeat,
-    tableGender,
-    mixedAdjacentPairs: adjacencyGender.mixedAdjacentPairs,
-    sameGenderAdjacentPairs: adjacencyGender.sameGenderAdjacentPairs
+    sameGroupAdjacentPairs: adjacencyGroup.sameGroupAdjacentPairs
   };
 }
 
@@ -179,75 +173,40 @@ function getHeadSeatPoints(constraint: HeadSeatConstraint, atHead: boolean): num
   return atHead ? AVOID_HEAD_PENALTY : AVOID_HEAD_CLEAR_POINTS;
 }
 
-function scoreTableGender(
-  assignments: SeatAssignments,
-  guestsById: Map<string, Guest>,
-  layout: SeatingLayout
-): TableGenderScore[] {
-  return layout.tableIds.map((tableId) => {
-    let male = 0;
-    let female = 0;
-
-    for (const [seatId, guestId] of Object.entries(assignments)) {
-      const seat = layout.seatsById.get(Number(seatId));
-      const guest = guestId ? guestsById.get(guestId) : undefined;
-
-      if (seat?.tableId !== tableId || !guest) continue;
-
-      if (guest.gender === "M") male += 1;
-      else if (guest.gender === "F") female += 1;
-    }
-
-    const known = male + female;
-    const imbalance = Math.abs(male - female);
-    const points = known < 2 ? 0 : Math.max(0, 14 - imbalance * 3);
-
-    return { tableId, male, female, points };
-  });
-}
-
-function scoreAdjacentGender(
+function scoreAdjacentGroup(
   assignments: SeatAssignments,
   guestsById: Map<string, Guest>,
   layout: SeatingLayout
 ): {
   points: number;
-  mixedAdjacentPairs: number;
-  sameGenderAdjacentPairs: number;
+  sameGroupAdjacentPairs: number;
 } {
   let points = 0;
-  let mixedAdjacentPairs = 0;
-  let sameGenderAdjacentPairs = 0;
+  let sameGroupAdjacentPairs = 0;
 
   for (const [seatAId, neighbors] of layout.adjacentSeatIds.entries()) {
     for (const seatBId of neighbors) {
       if (seatAId >= seatBId) continue;
 
-      const genderA = getBinaryGender(assignments[seatAId], guestsById);
-      const genderB = getBinaryGender(assignments[seatBId], guestsById);
+      const groupsA = assignments[seatAId] ? (guestsById.get(assignments[seatAId]!)?.groups ?? []) : [];
+      const groupsB = assignments[seatBId] ? (guestsById.get(assignments[seatBId]!)?.groups ?? []) : [];
 
-      if (!genderA || !genderB) continue;
+      if (groupsA.length === 0 || groupsB.length === 0) continue;
 
-      if (genderA === genderB) {
-        sameGenderAdjacentPairs += 1;
-        points += SAME_GENDER_ADJACENT_PENALTY;
-      } else {
-        mixedAdjacentPairs += 1;
-        points += MIXED_ADJACENT_POINTS;
+      const setB = new Set(groupsB);
+      let sharedCount = 0;
+      for (const g of groupsA) {
+        if (setB.has(g)) sharedCount += 1;
+      }
+
+      if (sharedCount > 0) {
+        sameGroupAdjacentPairs += 1;
+        points += SAME_GROUP_ADJACENT_PENALTY * sharedCount;
       }
     }
   }
 
-  return { points, mixedAdjacentPairs, sameGenderAdjacentPairs };
-}
-
-function getBinaryGender(
-  guestId: string | null,
-  guestsById: Map<string, Guest>
-): Extract<Gender, "M" | "F"> | null {
-  const gender = guestId ? guestsById.get(guestId)?.gender : undefined;
-
-  return gender === "M" || gender === "F" ? gender : null;
+  return { points, sameGroupAdjacentPairs };
 }
 
 function sumPoints(results: PairScoreResult[]): number {

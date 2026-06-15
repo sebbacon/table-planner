@@ -22,7 +22,7 @@ const NAME_HEADERS = new Set([
 ]);
 const FIRST_NAME_HEADERS = new Set(["first", "first name", "firstname", "forename"]);
 const LAST_NAME_HEADERS = new Set(["last", "last name", "lastname", "surname", "family name"]);
-const GENDER_HEADERS = new Set(["gender", "sex"]);
+const GROUP_HEADERS = new Set(["group", "groups", "category", "dimension", "type", "gender", "sex"]);
 
 export async function spreadsheetFileToGuestText(file: File): Promise<SpreadsheetImportResult> {
   const extension = getFileExtension(file.name);
@@ -56,12 +56,12 @@ export function rowsToGuestText(rows: SpreadsheetRow[]): SpreadsheetImportResult
   const dataRows = columns.hasHeader ? nonEmptyRows.slice(1) : nonEmptyRows;
 
   if (!columns.hasHeader) {
-    warnings.push("No header row found. Used column A for names and column B for genders.");
+    warnings.push("No header row found. Used column A for names and column B for groups.");
   }
 
   const guestLines = dataRows.flatMap((row, index) => {
     const name = getNameFromRow(row, columns);
-    const gender = columns.genderIndex === null ? "" : normalizeCell(row[columns.genderIndex]);
+    const group = columns.groupIndex === null ? "" : normalizeCell(row[columns.groupIndex]);
 
     if (!name) {
       if (row.some((cell) => normalizeCell(cell))) {
@@ -71,7 +71,7 @@ export function rowsToGuestText(rows: SpreadsheetRow[]): SpreadsheetImportResult
       return [];
     }
 
-    return gender ? [`${name}, ${gender}`] : [name];
+    return group ? [`${name}, ${group}`] : [name];
   });
 
   return {
@@ -86,7 +86,7 @@ interface ColumnDetection {
   nameIndex: number | null;
   firstNameIndex: number | null;
   lastNameIndex: number | null;
-  genderIndex: number | null;
+  groupIndex: number | null;
 }
 
 function detectColumns(headerRow: SpreadsheetRow): ColumnDetection {
@@ -94,8 +94,8 @@ function detectColumns(headerRow: SpreadsheetRow): ColumnDetection {
   const nameIndex = findHeaderIndex(normalizedHeaders, NAME_HEADERS);
   const firstNameIndex = findHeaderIndex(normalizedHeaders, FIRST_NAME_HEADERS);
   const lastNameIndex = findHeaderIndex(normalizedHeaders, LAST_NAME_HEADERS);
-  const genderIndex = findHeaderIndex(normalizedHeaders, GENDER_HEADERS);
-  const hasHeader = nameIndex !== null || firstNameIndex !== null || lastNameIndex !== null || genderIndex !== null;
+  const groupIndex = findHeaderIndex(normalizedHeaders, GROUP_HEADERS);
+  const hasHeader = nameIndex !== null || firstNameIndex !== null || lastNameIndex !== null || groupIndex !== null;
 
   if (hasHeader) {
     return {
@@ -103,7 +103,7 @@ function detectColumns(headerRow: SpreadsheetRow): ColumnDetection {
       nameIndex,
       firstNameIndex,
       lastNameIndex,
-      genderIndex
+      groupIndex
     };
   }
 
@@ -112,7 +112,7 @@ function detectColumns(headerRow: SpreadsheetRow): ColumnDetection {
     nameIndex: 0,
     firstNameIndex: null,
     lastNameIndex: null,
-    genderIndex: headerRow.length > 1 ? 1 : null
+    groupIndex: headerRow.length > 1 ? 1 : null
   };
 }
 

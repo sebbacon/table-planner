@@ -513,16 +513,40 @@ p {
   width: 11px;
 }
 
-.guest-chip.gender-m {
-  background: #dceff6;
-  border-color: #6f9fb0;
-  color: #153d4c;
+.guest-chip.group-1 {
+  background: #dbeafe;
+  border-color: #6b9fd4;
+  color: #1e3a5f;
 }
 
-.guest-chip.gender-f {
-  background: #f8e0e9;
-  border-color: #c27b96;
-  color: #5a2036;
+.guest-chip.group-2 {
+  background: #d1fae5;
+  border-color: #5a9e7a;
+  color: #14432e;
+}
+
+.guest-chip.group-3 {
+  background: #ede9fe;
+  border-color: #8b72cc;
+  color: #3b1f6e;
+}
+
+.guest-chip.group-4 {
+  background: #fef3c7;
+  border-color: #b8902c;
+  color: #4a3500;
+}
+
+.guest-chip.group-5 {
+  background: #fee2e2;
+  border-color: #c47070;
+  color: #5a1a1a;
+}
+
+.guest-chip.group-6 {
+  background: #e0f2fe;
+  border-color: #5a9ab5;
+  color: #0c3547;
 }
 
 .guest-chip.highlighted {
@@ -898,8 +922,12 @@ p {
   }
 
   .guest-chip,
-  .guest-chip.gender-m,
-  .guest-chip.gender-f {
+  .guest-chip.group-1,
+  .guest-chip.group-2,
+  .guest-chip.group-3,
+  .guest-chip.group-4,
+  .guest-chip.group-5,
+  .guest-chip.group-6 {
     background: #ffffff;
     border-color: #9ca3af;
     box-shadow: none;

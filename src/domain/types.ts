@@ -1,5 +1,3 @@
-export type Gender = "M" | "F" | "Other" | "Unknown";
-
 export type PairConstraintType = "prefer_adjacent" | "avoid_adjacent";
 export type PairStrength = "high" | "medium" | "low";
 export type HeadSeatConstraintType = "prefer_head" | "avoid_head";
@@ -8,7 +6,7 @@ export type ConstraintType = PairConstraintType | HeadSeatConstraintType;
 export interface Guest {
   id: string;
   name: string;
-  gender: Gender;
+  groups: string[];
 }
 
 export interface ConstraintPair {
@@ -94,25 +92,17 @@ export interface HeadSeatScoreResult {
   satisfied: boolean;
 }
 
-export interface TableGenderScore {
-  tableId: number;
-  male: number;
-  female: number;
-  points: number;
-}
-
 export interface ScoreBreakdown {
   total: number;
+  constraintPoints: number;
   preferencePoints: number;
   avoidPoints: number;
   headSeatPoints: number;
-  genderPoints: number;
+  groupPoints: number;
   preferred: PairScoreResult[];
   avoided: PairScoreResult[];
   headSeat: HeadSeatScoreResult[];
-  tableGender: TableGenderScore[];
-  mixedAdjacentPairs: number;
-  sameGenderAdjacentPairs: number;
+  sameGroupAdjacentPairs: number;
 }
 
 export interface SavedLayout {

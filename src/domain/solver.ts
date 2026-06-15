@@ -65,7 +65,11 @@ export function generatePlans({
     });
   }
 
-  return candidates.sort((a, b) => b.score.total - a.score.total).slice(0, count);
+  return candidates.sort((a, b) => {
+    const cDiff = b.score.constraintPoints - a.score.constraintPoints;
+    if (cDiff !== 0) return cDiff;
+    return b.score.groupPoints - a.score.groupPoints;
+  }).slice(0, count);
 }
 
 function createRandomPlan(
