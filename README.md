@@ -11,9 +11,26 @@ npm install
 npm run dev
 ```
 
-Then open [http://localhost:5173](http://localhost:5173).
+Then open [http://localhost:5173/table-planner/](http://localhost:5173/table-planner/).
 
 If you have [just](https://github.com/casey/just) installed, `just` also works.
+
+## Deployment
+
+The GitHub Actions workflow in `.github/workflows/deploy.yml` builds and deploys
+the app to [GitHub Pages](https://sebbacon.github.io/table-planner/) on every push
+to `main`. It can also be run manually from the Actions tab.
+
+In the repository's **Settings → Pages**, set **Build and deployment → Source**
+to **GitHub Actions** once before the first deployment. No deployment secrets
+are needed; the workflow uses GitHub's built-in token.
+
+To preview a production build locally, run `npm run build` followed by
+`npm run preview`, then open `http://localhost:4173/table-planner/`.
+Vite's base path is `/table-planner/` to match the repository's Pages URL.
+
+Plans are saved in each browser's local storage. To move an existing local plan
+to the hosted app, export it to JSON and import it on the hosted site.
 
 ## Code quality
 
