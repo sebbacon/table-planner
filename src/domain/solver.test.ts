@@ -115,3 +115,11 @@ function seededRandom(seed: number) {
     return (value - 1) / 2147483646;
   };
 }
+
+it("honours the group-mixing setting during search and candidate scoring", () => {
+  const layout = buildSeatingLayout({ tables: [{ id: 1, kind: "circular", seats: 4 }] });
+  const guests = Array.from({ length: 4 }, (_, index) => ({ id: `g${index}`, name: `Guest ${index}`, groups: ["Family"] }));
+  const options = { guests, constraints: [], layout, attempts: 4, improveIterations: 20 };
+  expect(generatePlans({ ...options, mixGroups: false }).every((candidate) => candidate.score.groupPoints === 0)).toBe(true);
+  expect(generatePlans({ ...options, mixGroups: true }).every((candidate) => candidate.score.groupPoints < 0)).toBe(true);
+});

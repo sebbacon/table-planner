@@ -17,6 +17,7 @@ export interface GeneratePlansOptions {
   attempts?: number;
   improveIterations?: number;
   rng?: () => number;
+  mixGroups?: boolean;
 }
 
 export const EFFORT_LEVELS = [
@@ -36,7 +37,8 @@ export function generatePlans({
   count = 6,
   attempts = EFFORT_LEVELS[DEFAULT_EFFORT - 1].attempts,
   improveIterations = EFFORT_LEVELS[DEFAULT_EFFORT - 1].improveIterations,
-  rng = Math.random
+  rng = Math.random,
+  mixGroups = true
 }: GeneratePlansOptions): ScoredPlan[] {
   const candidates: ScoredPlan[] = [];
   const signatures = new Set<string>();
@@ -54,7 +56,7 @@ export function generatePlans({
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const plan = createRandomPlan(guestIds, preferHeadIds, avoidHeadIds, preferPairs, layout, rng, `candidate-${attempt}`);
-    improvePlan(plan, guests, constraints, preferHeadIds, avoidHeadIds, preferPairs, layout, improveIterations, rng);
+    improvePlan(plan, guests, constraints, preferHeadIds, avoidHeadIds, preferPairs, layout, improveIterations, rng, mixGroups);
     const signature = getPlanSignature(plan, layout);
 
     if (signatures.has(signature)) continue;
@@ -62,7 +64,7 @@ export function generatePlans({
     signatures.add(signature);
     candidates.push({
       plan,
-      score: scorePlan(plan, guests, constraints, layout)
+      score: scorePlan(plan, guests, constraints, layout, mixGroups)
     });
   }
 
@@ -255,9 +257,10 @@ function improvePlan(
   preferPairs: ConstraintPair[],
   layout: SeatingLayout,
   iterations: number,
-  rng: () => number
+  rng: () => number,
+  mixGroups: boolean
 ): void {
-  let currentScore = scorePlan(plan, guests, constraints, layout).total;
+  let currentScore = scorePlan(plan, guests, constraints, layout, mixGroups).total;
   const swappableSeatIds = [...layout.seatIds];
   const kickThreshold = Math.max(50, Math.floor(iterations * 0.10));
   let noImprovementCount = 0;
@@ -280,7 +283,7 @@ function improvePlan(
           swapAssignments(plan.assignments, a, b);
         }
       }
-      currentScore = scorePlan(plan, guests, constraints, layout).total;
+      currentScore = scorePlan(plan, guests, constraints, layout, mixGroups).total;
       noImprovementCount = 0;
       continue;
     }
@@ -304,7 +307,7 @@ function improvePlan(
     if (!isTableSwapAllowed(seatAId, seatBId, plan.assignments, highStrengthGuestIds, layout)) continue;
 
     swapAssignments(plan.assignments, seatAId, seatBId);
-    const nextScore = scorePlan(plan, guests, constraints, layout).total;
+    const nextScore = scorePlan(plan, guests, constraints, layout, mixGroups).total;
     const keepWorseMove = nextScore < currentScore && rng() < 0.012;
 
     if (nextScore > currentScore) {

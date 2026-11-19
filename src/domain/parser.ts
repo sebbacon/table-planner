@@ -5,7 +5,7 @@ export interface GuestParseResult {
   warnings: string[];
 }
 
-export function parseGuestText(input: string): GuestParseResult {
+export function parseGuestText(input: string, guestIds?: string[]): GuestParseResult {
   const warnings: string[] = [];
   const seenNames = new Map<string, number>();
   const guests = input
@@ -23,13 +23,40 @@ export function parseGuestText(input: string): GuestParseResult {
       }
 
       return {
-        id: `guest-${index + 1}-${slugify(name)}`,
+        id: guestIds?.[index] ?? `guest-${index + 1}-${slugify(name)}`,
         name,
         groups
       };
     });
 
   return { guests, warnings };
+}
+
+// Match names before positions so inserting or reordering lines preserves identity.
+// Unmatched names at the same position in a same-length list are renames.
+export function reconcileGuestText(input: string, previous: Guest[]): GuestParseResult {
+  const result = parseGuestText(input);
+  const available = [...previous];
+  const ids = result.guests.map((guest) => {
+    const index = available.findIndex((old) => old.name.toLocaleLowerCase() === guest.name.toLocaleLowerCase());
+    return index < 0 ? undefined : available.splice(index, 1)[0].id;
+  });
+  if (result.guests.length === previous.length) {
+    if (available.length === 1) ids[ids.indexOf(undefined)] = available.pop()!.id;
+    ids.forEach((id, index) => {
+      if (id) return;
+      const old = previous[index];
+      const unmatched = available.findIndex((guest) => guest.id === old.id);
+      if (unmatched >= 0) ids[index] = available.splice(unmatched, 1)[0].id;
+    });
+  }
+  const reserved = new Set([...previous.map((guest) => guest.id), ...ids.filter(Boolean)]);
+  result.guests = result.guests.map((guest, index) => {
+    const id = ids[index] ?? (reserved.has(guest.id) ? `guest-${crypto.randomUUID()}` : guest.id);
+    reserved.add(id);
+    return { ...guest, id };
+  });
+  return result;
 }
 
 function parseGuestLine(line: string): { name: string; groups: string[] } {

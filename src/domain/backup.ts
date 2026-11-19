@@ -6,6 +6,8 @@ export interface PlannerData {
   activePlan: Plan | null;
   savedLayouts?: SavedLayout[];
   venueConfig?: VenueConfig;
+  guestIds?: string[];
+  mixGroups?: boolean;
 }
 
 export interface PlannerBackup extends PlannerData {
@@ -31,7 +33,9 @@ export function createPlannerBackup(
     constraints: data.constraints,
     activePlan: data.activePlan,
     savedLayouts: data.savedLayouts,
-    venueConfig: data.venueConfig
+    venueConfig: data.venueConfig,
+    ...(data.guestIds ? { guestIds: data.guestIds } : {}),
+    ...(data.mixGroups !== undefined ? { mixGroups: data.mixGroups } : {})
   };
 }
 
@@ -63,7 +67,12 @@ export function parsePlannerBackupJson(input: string): PlannerData {
     savedLayouts: Array.isArray(parsed.savedLayouts)
       ? parsed.savedLayouts.map(parseSavedLayout)
       : [],
-    venueConfig: parseVenueConfig(parsed.venueConfig)
+    venueConfig: parseVenueConfig(parsed.venueConfig),
+    ...(Array.isArray(parsed.guestIds) && parsed.guestIds.every((id) => typeof id === "string")
+      && new Set(parsed.guestIds).size === parsed.guestIds.length
+      && parsed.guestIds.length === parsed.guestText.split(/\r?\n/).filter((line) => line.trim()).length
+      ? { guestIds: parsed.guestIds as string[] } : {}),
+    ...(typeof parsed.mixGroups === "boolean" ? { mixGroups: parsed.mixGroups } : {})
   };
 }
 

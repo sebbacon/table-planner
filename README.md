@@ -1,8 +1,8 @@
 # Table Planner
 
-A browser-based tool for generating and optimising seating plans. Enter your guest list, set constraints (who should sit near whom, who should avoid whom), and let the solver find the best arrangement across your tables.
+A local-first seating planner built with Vite, React, and TypeScript. Set up your tables, add guests and optional seating preferences, then generate and adjust seating plans.
 
-State is auto-saved to `localStorage`. Export to JSON to back up or share a plan.
+Guest lists, spreadsheet parsing, and plan generation stay in the browser. Applied changes are automatically saved in that browser's `localStorage`. Other browsers, devices, and website origins have separate data; clearing browser data removes the session. Download a backup to keep a separate copy or move your work.
 
 ## Install and run
 
@@ -11,95 +11,81 @@ npm install
 npm run dev
 ```
 
-Then open [http://localhost:5173/table-planner/](http://localhost:5173/table-planner/).
-
-If you have [just](https://github.com/casey/just) installed, `just` also works.
-
-## Deployment
-
-The GitHub Actions workflow in `.github/workflows/deploy.yml` builds and deploys
-the app to [GitHub Pages](https://sebbacon.github.io/table-planner/) on every push
-to `main`. It can also be run manually from the Actions tab.
-
-In the repository's **Settings → Pages**, set **Build and deployment → Source**
-to **GitHub Actions** once before the first deployment. No deployment secrets
-are needed; the workflow uses GitHub's built-in token.
-
-To preview a production build locally, run `npm run build` followed by
-`npm run preview`, then open `http://localhost:4173/table-planner/`.
-Vite's base path is `/table-planner/` to match the repository's Pages URL.
-
-Plans are saved in each browser's local storage. To move an existing local plan
-to the hosted app, export it to JSON and import it on the hosted site.
-
-## Code quality
-
-- `npm run lint` / `just lint`: ESLint recommended JavaScript and TypeScript checks.
-- `npm run test:coverage` / `just coverage`: tests with V8 coverage for all source files, including untested files. Open `coverage/index.html`; JSON and LCOV reports are also generated.
-- `npm run metrics:crap` / `just crap`: refresh coverage and rank the top 20 function hotspots; all results are saved to `coverage/crap.json`.
-- `npm run check` / `just check`: lint, coverage, CRAP report, and production build.
-
-CRAP is `complexity² × (1 − coverage)³ + complexity`, with coverage as a fraction. Complexity uses ESLint's classic cyclomatic complexity. Function coverage here is the fraction of executable statement-start lines covered inside that function, excluding nested functions (empty functions use their invocation count). This is a line-based approximation, not branch coverage. Scores of 30 or more are highlighted by count for review; metrics are informational and do not impose a quality gate. Generated reports are ignored by git.
+Open [http://localhost:5173/table-planner/](http://localhost:5173/table-planner/). `just dev` also works.
 
 ## How to use
 
-### 1. Configure your tables
+### 1. Setup
 
-Click **Table setup** in the top bar. Add long (rectangular) tables or circular tables, set the number of seats, and optionally enable head seats at either end of a long table. Click **Confirm layout** when done.
+**Check your tables.** Use the default 39-seat layout or choose **Change tables**. Add long or circular tables, set seat counts, and optionally enable end seats on long tables. Choose **Use these tables** to apply. Changing seating geometry clears current and saved plans after a review; guests and preferences are kept. Renaming tables preserves plans. Unchanged tables leave everything intact.
 
-Changing the layout clears any existing plan and saved layouts.
+**Add guests.** Choose **Paste or type names**, enter one guest per line, then choose **Done**. Changes remain a cancellable draft until Done. Existing names keep their identities when reordered or when lines are inserted. Replacing a name in a same-length list is treated as a rename, preserving its seat and preferences. Removed guests are removed from seating plans and preferences; Undo restores the previous session.
 
-### 2. Enter guests
+For an explicit rename, expand **View guest list** and use the pencil beside a name. Bulk edits that remove names and introduce new ones are reviewed before applying, so ambiguous renames cannot silently remove someone's seating preferences.
 
-Click **Edit** in the Guests panel and type one guest per line:
+Optional group labels follow a comma:
 
 ```
-Jane Smith, Bride
-Sam Jones, Groom
-Alex Lee, Bride, Younger
+Jane Smith, Family
+Sam Jones, Friends
+Alex Lee, Friends, Younger
 Pat Morgan
 ```
 
-Group labels are optional. Each guest can have zero, one, or several comma-separated groups after their name. The solver uses groups as a secondary tiebreaker: it tries to avoid seating two guests from the same group next to each other, while always prioritising explicit constraints first.
+**Choose spreadsheet** reads CSV, TSV, or Excel files locally. Preview the detected names and warnings before accepting. Importing a spreadsheet replaces guests and clears preferences and current/saved plans; it can be undone. **Try an example** provides sample guests when the list is empty.
 
-You can also **Upload** a CSV or Excel spreadsheet — the name column is detected automatically, and a `group`, `category`, `dimension`, `gender`, or `sex` column (if present) is used as the group label.
+**Seating preferences** is optional and collapsed by default:
 
-### 3. Add constraints
+- **Seat near each other:** neighbours, neighbours or opposite, or anywhere nearby (including diagonals). Closer-distance preferences receive more priority.
+- **Keep apart:** avoid nearby seats, including opposite and diagonal seats.
+- **End-seat preferences:** prefer or avoid end seats on long tables. These controls appear when the venue has end seats.
+- **Mix guests from the same group:** optional mixing of group labels. Explicit seating preferences take priority. Disabled for new sessions; existing backups retain their previous group-mixing behaviour.
 
-Constraints are weighted preferences, not hard rules. The solver tries to satisfy as many as possible.
+These are weighted preferences, not guarantees. Conflicting preferences are flagged during setup.
 
-**Good Adjacent** — pairs of guests who should sit next to each other. Each pair has a strength:
-- **High** — direct neighbours only
-- **Med** — direct neighbours or directly opposite
-- **Low** — any nearby seat counts
+Choose **Generate seating plans** when ready. Guests beyond the available capacity remain unseated.
 
-**Avoid Adjacent** — pairs who should not sit next to each other.
+### 2. Plan
 
-**Head Seats** — mark individual guests as preferring or avoiding the end seats of a long table.
+The app generates up to six alternatives and opens the best option. Review the seated count, unmet preferences, and alternatives. Hover or focus names in the issue lists to locate guests. Point totals are in **Scoring details**.
 
-> **Tip:** the more constraints you add, the harder it is to satisfy them all. If one guest appears in many "Good Adjacent" pairs, the solver can only place them next to so many people at once. The **Constraint Conflicts** panel (shown automatically when issues are detected) flags guests who have more constraints than can realistically be satisfied.
+Drag a guest to an empty seat to move them, or to an occupied seat to swap them. Dropping an unseated guest onto an occupied seat unseats its occupant. Guests can also be dragged to **Unseated guests**.
 
-### 4. Generate a plan
+For click, touch, or keyboard input, select a guest on the canvas or in **Move or swap a guest**, choose a destination, then use **Move / swap** or **Unseat guest**. Full names appear on guest chips and in the movement controls.
 
-Click **Shuffle** to generate six candidate plans. The solver runs a randomised local-search: it seeds candidate arrangements, then iteratively swaps seats to improve the score, and returns the best options.
+**Generate more options** explores new arrangements. **Generation settings** contains search effort (higher takes longer) and **Reseat in guest-list order**. **Undo** restores recent changes, including generation, manual moves, preference changes, imports, and deletions. History is limited to the last 20 actions in the current session and is not persisted across reloads.
 
-Use the **Effort** slider to trade speed for quality — higher effort means more search iterations.
+**Print** produces a monochrome plan with full names. If anyone is unseated, the app warns before printing a draft and includes their names on the printout.
 
-The **Alternatives** panel on the right lists all six candidates with their scores. Click any to load it as the active plan.
+### 3. Saved plans and backups
 
-### 5. Review and adjust
+**Keep this version** stores an independent snapshot in **Saved plans**. Use the pencil button to rename it, or **Open plan** to restore it. Summaries reflect the current seating preferences. Guest-list edits are reconciled across kept versions too.
 
-The **Score** panel breaks down the active plan:
-- Good pairs met vs. total
-- Bad adjacencies
-- Head seat constraints satisfied
-- Group points (same-group adjacencies avoided)
+Kept versions are stored in the same browser as the working plan. They are not external backups.
 
-Hover over a guest name to highlight their seat in the layout. Drag guest chips to swap seats manually, or drag someone to the **Holding Area** to leave their seat empty.
+The **Backup & restore** menu contains:
 
-### 6. Save and export
+- **Download backup:** JSON containing guests, stable guest identities, preferences, group-mixing settings, tables, the current plan, and kept versions.
+- **Restore backup:** review and replace the session from a downloaded JSON file. Restore can be undone. Older exports are still supported; those without table configuration use the default tables.
 
-- **Save to library** — bookmark the current plan to compare against future shuffles. Click a saved name to rename it.
-- **Export Data** — download a JSON file containing guests, constraints, and all saved layouts.
-- **Import Data** — restore from a previously exported file.
-- **Print** — print-optimised layout (monochrome, full names).
+Local saving errors are reported in the saving status. Unreadable sessions are left untouched until the user restores a backup or explicitly starts fresh.
+
+## Deployment
+
+The GitHub Actions workflow in `.github/workflows/deploy.yml` builds and deploys to [GitHub Pages](https://sebbacon.github.io/table-planner/) on pushes to `main`, or manually from the Actions tab. In **Settings → Pages**, choose **GitHub Actions** as the source. No deployment secrets are needed.
+
+For a local production preview, run `npm run build` followed by `npm run preview`, then open `http://localhost:4173/table-planner/`. The base path is `/table-planner/`.
+
+Moving between the local and hosted app requires downloading and restoring a backup because they have separate browser storage.
+
+## Code quality
+
+- `npm run lint` / `just lint`: ESLint and TypeScript rules.
+- `npm test` / `just test`: domain and interaction regression tests.
+- `npm run test:coverage` / `just coverage`: V8 coverage, including untested files. Reports in `coverage/`.
+- `npm run metrics:crap` / `just crap`: refresh coverage and rank complexity/coverage hotspots; results in `coverage/crap.json`.
+- `npm run check` / `just check`: lint, coverage, CRAP report, and production build.
+
+CRAP is `complexity² × (1 − coverage)³ + complexity`. Function coverage uses the fraction of executable statement-start lines covered inside each function, excluding nested functions. This is a line-based approximation. Scores of 30 or more are highlighted for review; metrics are informational.
+
+Keep generated/local files out of git: `node_modules/`, `dist/`, `.venv/`, coverage reports, and exported planner data are ignored.

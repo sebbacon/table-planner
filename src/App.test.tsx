@@ -1,315 +1,355 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { App } from "./App";
+import { readFileText } from "./domain/file";
+import type { PlannerData } from "./domain/backup";
 
-describe("App", () => {
-  beforeEach(() => {
-    localStorage.clear();
+const storageKey = "table-planner-state-v2";
+const initial: PlannerData = {
+  guestText: "Jane Smith\nAlex Brown\nSam Jones",
+  constraints: [{ id: "near", type: "prefer_adjacent", guestAId: "guest-1-jane-smith", guestBId: "guest-3-sam-jones" }],
+  activePlan: { id: "plan-1", assignments: { 1: "guest-1-jane-smith", 2: "guest-3-sam-jones", 3: null }, holdingGuestIds: ["guest-2-alex-brown"] }
+};
+function seed(data: PlannerData = initial) { localStorage.setItem(storageKey, JSON.stringify(data)); }
+function saved(): PlannerData { return JSON.parse(localStorage.getItem(storageKey) ?? "{}"); }
+async function editGuests(user: ReturnType<typeof userEvent.setup>, text: string) {
+  await user.click(screen.getByRole("button", { name: "1. Setup" }));
+  await user.click(screen.getByRole("button", { name: /edit names|paste or type names/i }));
+  fireEvent.change(screen.getByLabelText("Guest list"), { target: { value: text } });
+  await user.click(screen.getByRole("button", { name: "Done" }));
+  const review = screen.queryByRole("dialog", { name: "Review guest-list changes" });
+  if (review) await user.click(within(review).getByRole("button", { name: "Apply guest changes" }));
+}
+async function restoreBackup(user: ReturnType<typeof userEvent.setup>, data: PlannerData) {
+  await user.click(screen.getByText("Backup & restore"));
+  await user.upload(screen.getByLabelText("Restore planner backup"), new File([JSON.stringify({ ...data, version: 1 })], "backup.json", { type: "application/json" }));
+  const dialog = await screen.findByRole("dialog");
+  await user.click(within(dialog).getByRole("button", { name: "Restore backup" }));
+}
+
+beforeEach(() => {
+  localStorage.clear();
+  // jsdom doesn't implement the native dialog lifecycle/focus trap.
+  HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
+  HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
+});
+afterEach(() => vi.restoreAllMocks());
+
+describe("guided setup", () => {
+  it("starts with clear actions, local reassurance, and optional preferences", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    expect(screen.getByRole("heading", { name: "Let’s make a seating plan" })).toBeInTheDocument();
+    expect(screen.getByText(/Your guest list stays on this device/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Generate seating plans" })).toBeDisabled();
+    expect(screen.queryByRole("heading", { name: "Alternatives" })).not.toBeInTheDocument();
+    const preferences = screen.getByText("Seating preferences", { selector: "summary" }).closest("details")!;
+    expect(preferences).not.toHaveAttribute("open");
+    await user.click(screen.getByRole("button", { name: "Paste or type names" }));
+    fireEvent.change(screen.getByLabelText("Guest list"), { target: { value: "Jane Smith\nSam Jones" } });
+    expect(screen.getByRole("button", { name: "Generate seating plans" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.getByRole("button", { name: "Generate seating plans" })).toBeEnabled();
+    await waitFor(() => expect(saved().guestText).toBe("Jane Smith\nSam Jones"));
+    expect(screen.getByRole("status")).toHaveTextContent("Saved in this browser");
   });
 
-  it.each([
-    {
-      action: "removes a seated guest",
-      guestText: "Jane Smith\nAlex Brown",
-      expectedPlan: {
-        id: "plan-1", assignments: { 1: "guest-1-jane-smith", 2: null, 3: null },
-        holdingGuestIds: ["guest-2-alex-brown"]
-      },
-      heldNames: ["Alex"], seatedNames: ["Jane"]
-    },
-    {
-      action: "adds a guest to holding",
-      guestText: "Jane Smith\nAlex Brown\nSam Jones\nRobin Green",
-      expectedPlan: {
-        id: "plan-1", assignments: { 1: "guest-1-jane-smith", 2: "guest-3-sam-jones", 3: null },
-        holdingGuestIds: ["guest-2-alex-brown", "guest-4-robin-green"]
-      },
-      heldNames: ["Alex", "Robin"], seatedNames: ["Jane", "Sam"]
-    },
-    {
-      action: "clears the guest list",
-      guestText: "",
-      expectedPlan: null,
-      heldNames: [], seatedNames: []
-    }
-  ])("reconciles and persists the plan when an edit $action", async ({
-    guestText, expectedPlan, heldNames, seatedNames
-  }) => {
+  it("keeps guest changes as a cancellable draft until Done", async () => {
     const user = userEvent.setup();
-    localStorage.setItem("table-planner-state-v2", JSON.stringify({
-      guestText: "Jane Smith\nAlex Brown\nSam Jones",
-      constraints: [],
-      activePlan: {
-        id: "plan-1",
-        assignments: { 1: "guest-1-jane-smith", 2: "guest-3-sam-jones", 3: null },
-        // Reconciliation must also remove stale and already-seated holding entries.
-        holdingGuestIds: ["guest-2-alex-brown", "guest-1-jane-smith", "removed-guest"]
-      }
-    }));
+    seed();
     render(<App />);
-    await screen.findByText("3 guests for 39 seats");
-    await user.click(screen.getByRole("button", { name: /^edit$/i }));
-    fireEvent.change(screen.getByLabelText("Guest list"), { target: { value: guestText } });
-
-    if (expectedPlan) {
-      const seating = within(screen.getByLabelText("Seating layout"));
-      const holding = within(screen.getByText("Holding Area").parentElement!);
-      expect(seating.queryAllByRole("button")).toHaveLength(seatedNames.length);
-      for (const name of seatedNames) {
-        expect(seating.getByRole("button", { name: new RegExp(`^${name}`) })).toBeInTheDocument();
-      }
-      expect(holding.queryAllByRole("button").map((button) => button.textContent?.trim()))
-        .toEqual(heldNames);
-    } else {
-      expect(screen.queryByLabelText("Seating layout")).not.toBeInTheDocument();
-      expect(screen.queryByText("Holding Area")).not.toBeInTheDocument();
-    }
-    await waitFor(() => {
-      const saved = JSON.parse(localStorage.getItem("table-planner-state-v2") ?? "{}");
-      expect(saved.guestText).toBe(guestText);
-      expect(saved.activePlan).toEqual(expectedPlan);
-    }, { timeout: 2000 });
+    await user.click(screen.getByRole("button", { name: "1. Setup" }));
+    await user.click(screen.getByRole("button", { name: "Edit names" }));
+    await user.clear(screen.getByLabelText("Guest list"));
+    expect(screen.getByText("3 guests for 39 seats")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "2. Plan" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: "Edit names" }));
+    expect(screen.getByLabelText("Guest list")).toHaveValue(initial.guestText);
   });
 
-  it("loads placeholder guests and renders the fixed 39-seat plan", async () => {
+  it("generates plans, exposes useful summaries, and supports keeping a named version", async () => {
     const user = userEvent.setup();
-
     render(<App />);
-
-    await user.click(screen.getByRole("button", { name: /^edit$/i }));
-    await user.click(screen.getByRole("button", { name: /fill/i }));
-    await user.click(screen.getByRole("button", { name: /reset/i }));
-
-    expect(screen.getByText("39 guests for 39 seats")).toBeInTheDocument();
+    await editGuests(user, "Jane Smith\nSam Jones");
+    await user.click(screen.getByRole("button", { name: "Generate seating plans" }));
+    expect(await screen.findByLabelText("Seating layout", {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(screen.getByText("2 of 2 guests seated")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Alternatives" })).toBeInTheDocument();
+    expect(screen.getByText("Scoring details").closest("details")).not.toHaveAttribute("open");
+    await user.click(screen.getByRole("button", { name: "Keep this version" }));
+    await user.click(screen.getByRole("button", { name: "Saved plans (1)" }));
+    await user.click(screen.getByRole("button", { name: "Rename Plan 1" }));
+    const name = screen.getByLabelText("Version name");
+    await user.clear(name);
+    await user.type(name, "Dinner{Enter}");
+    await user.click(screen.getByRole("button", { name: "Dinner" }));
     expect(screen.getByLabelText("Seating layout")).toBeInTheDocument();
-    expect(screen.getByText("39", { selector: ".seat-number" })).toBeInTheDocument();
   });
 
-  it("shows only first names on seating labels", async () => {
+  it("reads a spreadsheet locally and previews it before replacing a session", async () => {
     const user = userEvent.setup();
-
+    seed();
     render(<App />);
-
-    await user.click(screen.getByRole("button", { name: /^edit$/i }));
-    await user.type(screen.getByLabelText("Guest list"), "Jane Smith, Bride\nSam Jones, Groom");
-    await user.click(screen.getByRole("button", { name: /reset/i }));
-
-    const janeLabel = screen.getByRole("button", { name: /jane/i });
-    const samLabel = screen.getByRole("button", { name: /sam/i });
-
-    expect(janeLabel).toBeInTheDocument();
-    expect(samLabel).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /jane smith/i })).not.toBeInTheDocument();
-    expect(janeLabel.className).toMatch(/\bgroup-\d\b/);
-    expect(samLabel.className).toMatch(/\bgroup-\d\b/);
-  });
-
-  it("imports guests from an uploaded CSV spreadsheet", async () => {
-    const user = userEvent.setup();
-    const file = new File(["Name,Gender\nJane Smith,F\nSam Jones,M"], "guests.csv", {
-      type: "text/csv"
-    });
-
-    render(<App />);
-
-    await user.upload(screen.getByLabelText("Upload spreadsheet"), file);
-
-    expect(await screen.findByDisplayValue(/Jane Smith, F/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "1. Setup" }));
+    await user.upload(screen.getByLabelText("Choose guest spreadsheet"), new File(["Name,Gender\nPat Morgan,F\nRobin Green,M"], "guests.csv", { type: "text/csv" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Pat Morgan, F");
+    expect(screen.getByText("3 guests for 39 seats")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Use this guest list" }));
     expect(screen.getByText("2 guests for 39 seats")).toBeInTheDocument();
-    expect(screen.getByText("Imported 2 guests")).toBeInTheDocument();
+    await waitFor(() => expect(saved().constraints).toEqual([]));
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(saved().activePlan).toEqual(initial.activePlan));
+    expect(saved().constraints).toEqual(initial.constraints);
   });
 
-  it("imports planner data with pairings", async () => {
+  it("does not replace the current session when a preview is cancelled", async () => {
     const user = userEvent.setup();
-    const backup = {
-      version: 1,
-      exportedAt: "2026-05-27T12:00:00.000Z",
-      guestText: "Jane Smith, F\nSam Jones, M",
-      constraints: [
-        {
-          id: "pair-1",
-          type: "prefer_adjacent",
-          guestAId: "guest-1-jane-smith",
-          guestBId: "guest-2-sam-jones"
-        }
-      ],
-      activePlan: null
-    };
-    const file = new File([JSON.stringify(backup)], "table-planner.json", {
-      type: "application/json"
-    });
-
+    seed();
     render(<App />);
-
-    await user.upload(screen.getByLabelText("Import planner data"), file);
-
-    expect(await screen.findByDisplayValue(/Jane Smith, F/)).toBeInTheDocument();
-    expect(screen.getByText("2 guests for 39 seats")).toBeInTheDocument();
-    expect(screen.getByText("Imported data with 1 constraint")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("Jane Smith")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("Sam Jones")).toBeInTheDocument();
+    await user.click(screen.getByText("Backup & restore"));
+    await user.upload(screen.getByLabelText("Restore planner backup"), new File([JSON.stringify({ version: 1, guestText: "Other Guest", constraints: [], activePlan: null })], "backup.json", { type: "application/json" }));
+    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Cancel" }));
+    expect(screen.getByText("3 guests for 39 seats")).toBeInTheDocument();
+    expect(screen.getByLabelText("Seating layout")).toBeInTheDocument();
   });
+});
 
-  it("persists pair strength selection in state and to localStorage", async () => {
+describe("stable guests and saved data", () => {
+  it.each([
+    { action: "remove a seated guest", text: "Jane Smith\nAlex Brown", assignments: { 1: "guest-1-jane-smith", 2: null, 3: null }, holding: ["guest-2-alex-brown"] },
+    { action: "insert at the start", text: "Robin Green\nJane Smith\nAlex Brown\nSam Jones", assignments: initial.activePlan!.assignments, holding: ["guest-2-alex-brown", "guest-1-robin-green"] },
+    { action: "rename and reorder guests", text: "Sam Jones\nAlex Brown\nJane Smith", assignments: initial.activePlan!.assignments, holding: ["guest-2-alex-brown"] }
+  ])("preserves seating identities when you $action", async ({ text, assignments, holding }) => {
     const user = userEvent.setup();
-    localStorage.setItem(
-      "table-planner-state-v2",
-      JSON.stringify({
-        guestText: "Jane Smith\nSam Jones",
-        constraints: [
-          {
-            id: "pair-1",
-            type: "prefer_adjacent",
-            guestAId: "guest-1-jane-smith",
-            guestBId: "guest-2-sam-jones"
-          }
-        ],
-        activePlan: null
-      })
-    );
-
+    seed();
     render(<App />);
-    await screen.findByText("2 guests for 39 seats");
-
-    const highBtn = screen.getByRole("button", { name: "High" });
-    const medBtn = screen.getByRole("button", { name: "Med" });
-    expect(medBtn).toHaveClass("active");
-    expect(highBtn).not.toHaveClass("active");
-
-    await user.click(highBtn);
-    expect(highBtn).toHaveClass("active");
-    expect(medBtn).not.toHaveClass("active");
-
-    await waitFor(() => {
-      const saved = JSON.parse(localStorage.getItem("table-planner-state-v2") ?? "{}");
-      expect(saved.constraints[0].strength).toBe("high");
-    }, { timeout: 2000 });
+    await editGuests(user, text);
+    await waitFor(() => expect(saved().guestText).toBe(text));
+    expect(saved().activePlan?.assignments).toEqual(assignments);
+    expect(saved().activePlan?.holdingGuestIds).toEqual(holding);
+    if (text.includes("Sam Jones")) expect(saved().constraints).toEqual(initial.constraints);
+    else expect(saved().constraints).toEqual([]);
   });
 
-  it("saves guest text edits without requiring a seating plan or dropping pairings", async () => {
+  it("keeps renamed guests and their preferences through a reload", async () => {
     const user = userEvent.setup();
-    localStorage.setItem(
-      "table-planner-state-v2",
-      JSON.stringify({
-        guestText: "Jane Smith\nSam Jones",
-        constraints: [
-          {
-            id: "pair-1",
-            type: "prefer_adjacent",
-            guestAId: "guest-1-jane-smith",
-            guestBId: "guest-2-sam-jones"
-          }
-        ],
-        activePlan: null
-      })
-    );
-
+    seed();
+    const view = render(<App />);
+    await editGuests(user, "Jane Cooper\nAlex Brown\nSam Jones");
+    await waitFor(() => expect(saved().guestText).toContain("Jane Cooper"));
+    expect(saved().guestIds?.[0]).toBe("guest-1-jane-smith");
+    expect(saved().constraints).toEqual(initial.constraints);
+    view.unmount();
     render(<App />);
-
-    await screen.findByText("2 guests for 39 seats");
-    await user.click(screen.getByRole("button", { name: /^edit$/i }));
-    const guestInput = screen.getByLabelText("Guest list");
-    await waitFor(() => expect(guestInput).toHaveValue("Jane Smith\nSam Jones"));
-    fireEvent.change(guestInput, {
-      target: {
-        value: "Jane Smith, F\nSam Jones, M"
-      }
-    });
-
-    await waitFor(() => {
-      const saved = JSON.parse(localStorage.getItem("table-planner-state-v2") ?? "{}");
-      expect(saved.guestText).toBe("Jane Smith, F\nSam Jones, M");
-      expect(saved.constraints).toHaveLength(1);
-      expect(saved.constraints[0]).toMatchObject({
-        guestAId: "guest-1-jane-smith",
-        guestBId: "guest-2-sam-jones"
-      });
-    }, { timeout: 2000 });
+    expect(within(screen.getByLabelText("Seating layout")).getByRole("button", { name: "Jane Cooper" })).toBeInTheDocument();
   });
 
-  it("highlights a seated guest when hovering a missed good-pair name", async () => {
+  it("clears the plan when all guests are removed, with Undo available", async () => {
     const user = userEvent.setup();
-    const backup = {
-      version: 1,
-      exportedAt: "2026-05-31T08:00:00.000Z",
-      guestText: "Jane Smith, F\nSam Jones, M",
-      constraints: [
-        {
-          id: "pair-1",
-          type: "prefer_adjacent",
-          guestAId: "guest-1-jane-smith",
-          guestBId: "guest-2-sam-jones"
-        }
-      ],
-      activePlan: {
-        id: "plan-1",
-        assignments: {
-          11: "guest-1-jane-smith",
-          8: "guest-2-sam-jones"
-        },
-        holdingGuestIds: []
-      }
-    };
-    const file = new File([JSON.stringify(backup)], "table-planner.json", {
-      type: "application/json"
-    });
-
+    seed();
     render(<App />);
-
-    await user.upload(screen.getByLabelText("Import planner data"), file);
-    await screen.findByText("Missed good pairs");
-
-    const missedName = screen.getByRole("button", { name: "Jane Smith" });
-    // Scope to the seating plan; jsdom also includes the print surname in
-    // the accessible name because it does not apply the app's styles.
-    const seatedLabel = within(screen.getByLabelText("Seating layout"))
-      .getByRole("button", { name: /^Jane/ });
-
-    expect(seatedLabel).not.toHaveClass("highlighted");
-
-    await user.hover(missedName);
-
-    expect(seatedLabel).toHaveClass("highlighted");
-
-    await user.unhover(missedName);
-
-    expect(seatedLabel).not.toHaveClass("highlighted");
+    await editGuests(user, "");
+    await waitFor(() => expect(saved().activePlan).toBeNull());
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(saved().guestText).toBe(initial.guestText));
+    expect(saved().activePlan).toEqual(initial.activePlan);
   });
 
-  it("imports and scores head-seat constraints", async () => {
+  it("persists table-only changes and avoids clearing a plan for unchanged tables", async () => {
     const user = userEvent.setup();
-    const backup = {
-      version: 1,
-      exportedAt: "2026-05-31T08:00:00.000Z",
-      guestText: "Jane Smith, F\nSam Jones, M",
-      constraints: [
-        {
-          id: "head-1",
-          type: "avoid_head",
-          guestId: "guest-1-jane-smith"
-        }
-      ],
-      activePlan: {
-        id: "plan-1",
-        assignments: {
-          19: "guest-1-jane-smith",
-          1: "guest-2-sam-jones"
-        },
-        holdingGuestIds: []
-      }
-    };
-    const file = new File([JSON.stringify(backup)], "table-planner.json", {
-      type: "application/json"
-    });
-
+    seed();
     render(<App />);
-
-    await user.upload(screen.getByLabelText("Import planner data"), file);
-
-    expect(await screen.findByText("Head seat issues")).toBeInTheDocument();
-    expect(screen.getByText(/should avoid head seats/)).toBeInTheDocument();
-    expect(screen.getByText("0/1")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "1. Setup" }));
+    await user.click(screen.getByRole("button", { name: "Change tables" }));
+    await user.click(screen.getByRole("button", { name: "Use these tables" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Change tables" }));
+    fireEvent.change(screen.getByLabelText("Table 1 name"), { target: { value: "Family" } });
+    await user.click(screen.getByRole("button", { name: "Use these tables" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(saved().venueConfig?.tables[0].label).toBe("Family"));
+    expect(saved().activePlan).toEqual(initial.activePlan);
+    await user.click(screen.getByRole("button", { name: "Change tables" }));
+    fireEvent.change(screen.getAllByLabelText("Seats per side")[0], { target: { value: 8 } });
+    await user.click(screen.getByRole("button", { name: "Use these tables" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Change tables" }));
+    await waitFor(() => expect(saved().activePlan).toBeNull());
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(saved().activePlan).toEqual(initial.activePlan));
   });
+
+  it("round-trips custom tables, stable guest IDs, group settings, and kept versions via the UI backup", async () => {
+    const user = userEvent.setup();
+    const data: PlannerData = { ...initial, guestIds: ["jane", "alex", "sam"], mixGroups: false, constraints: [], venueConfig: { tables: [{ id: 1, kind: "circular", label: "Dinner", seats: 5 }] }, activePlan: { id: "round", assignments: { 1: "jane", 2: "sam" }, holdingGuestIds: ["alex"] } };
+    seed(data);
+    let blob: Blob | undefined;
+    URL.createObjectURL = vi.fn((value: Blob) => { blob = value; return "blob:backup"; });
+    URL.revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Keep this version" }));
+    await user.click(screen.getByText("Backup & restore"));
+    await user.click(screen.getByRole("button", { name: "Download backup" }));
+    const backup = JSON.parse(await readFileText(blob! as File));
+    expect(backup.venueConfig).toEqual(data.venueConfig);
+    expect(backup.guestIds).toEqual(data.guestIds);
+    expect(backup.mixGroups).toBe(false);
+    expect(backup.savedLayouts).toHaveLength(1);
+    await editGuests(user, "Someone Else");
+    await restoreBackup(user, backup);
+    expect(screen.getByText("3 guests for 5 seats")).toBeInTheDocument();
+    await waitFor(() => expect(saved().savedLayouts).toHaveLength(1));
+    expect(saved().venueConfig).toEqual(data.venueConfig);
+    expect(saved().activePlan).toEqual(data.activePlan);
+  });
+
+  it("reports storage failure without claiming the plan was saved", async () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("Quota exceeded"); });
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Could not save"));
+  });
+});
+
+describe("review and manual adjustments", () => {
+  it("supports keyboard-friendly seat swaps, unseating, and undo", async () => {
+    const user = userEvent.setup();
+    seed();
+    render(<App />);
+    const seating = within(screen.getByLabelText("Seating layout"));
+    await user.click(seating.getByRole("button", { name: "Jane Smith" }));
+    await user.selectOptions(screen.getByLabelText("Destination"), "2");
+    await user.click(screen.getByRole("button", { name: "Move / swap" }));
+    await waitFor(() => expect(saved().activePlan?.assignments[2]).toBe("guest-1-jane-smith"));
+    expect(saved().activePlan?.assignments[1]).toBe("guest-3-sam-jones");
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(saved().activePlan).toEqual(initial.activePlan));
+    await user.selectOptions(screen.getByLabelText("Guest", { selector: "select" }), "guest-1-jane-smith");
+    await user.click(screen.getByRole("button", { name: "Unseat guest" }));
+    expect(screen.getByText("Unseated guests (2)")).toBeInTheDocument();
+  });
+
+  it("swaps occupied seats by dragging, and moves a displaced occupant to unseated when needed", async () => {
+    const user = userEvent.setup();
+    seed();
+    render(<App />);
+    const seating = within(screen.getByLabelText("Seating layout"));
+    const jane = seating.getByRole("button", { name: "Jane Smith" });
+    const samSeat = seating.getByRole("button", { name: "Sam Jones" }).parentElement!;
+    fireEvent.dragStart(jane);
+    const over = new Event("dragover", { bubbles: true, cancelable: true });
+    fireEvent(samSeat, over);
+    expect(over.defaultPrevented).toBe(true);
+    fireEvent.drop(samSeat);
+    await waitFor(() => expect(saved().activePlan?.assignments[1]).toBe("guest-3-sam-jones"));
+    const holding = within(screen.getByText("Unseated guests (1)").parentElement!);
+    fireEvent.dragStart(holding.getByRole("button", { name: "Alex Brown" }));
+    fireEvent.drop(seating.getByRole("button", { name: "Jane Smith" }).parentElement!);
+    await waitFor(() => expect(saved().activePlan?.assignments[2]).toBe("guest-2-alex-brown"));
+    expect(screen.getByText("Unseated guests (1)").parentElement).toHaveTextContent("Jane Smith");
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(screen.getByText("Unseated guests (1)").parentElement).toHaveTextContent("Alex Brown");
+  });
+
+  it("highlights guests from actionable issues, and persists distance changes", async () => {
+    const user = userEvent.setup();
+    seed({ ...initial, activePlan: { ...initial.activePlan!, assignments: { 1: "guest-1-jane-smith", 28: "guest-3-sam-jones" } } });
+    render(<App />);
+    const issues = screen.getByText("Guests to seat nearer").parentElement!;
+    await user.hover(within(issues).getByRole("button", { name: "Jane Smith" }));
+    expect(within(screen.getByLabelText("Seating layout")).getByRole("button", { name: "Jane Smith" })).toHaveClass("highlighted");
+    await user.click(screen.getByRole("button", { name: "1. Setup" }));
+    await user.click(screen.getByText("Seating preferences", { selector: "summary" }));
+    await user.selectOptions(screen.getByLabelText("Seating distance"), "high");
+    await waitFor(() => expect(saved().constraints[0]).toMatchObject({ strength: "high" }));
+  });
+
+  it("warns before printing an incomplete plan", async () => {
+    const user = userEvent.setup();
+    const print = vi.spyOn(window, "print").mockImplementation(() => {});
+    seed();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Print" }));
+    expect(print).not.toHaveBeenCalled();
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent("1 guest is still unseated");
+    await user.click(within(dialog).getByRole("button", { name: "Print draft" }));
+    await waitFor(() => expect(print).toHaveBeenCalledOnce());
+  });
+
+  it("preserves kept versions through manual edits and makes deletions undoable", async () => {
+    const user = userEvent.setup();
+    seed();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Keep this version" }));
+    const seating = within(screen.getByLabelText("Seating layout"));
+    await user.click(seating.getByRole("button", { name: "Jane Smith" }));
+    await user.click(screen.getByRole("button", { name: "Unseat guest" }));
+    await user.click(screen.getByRole("button", { name: "Saved plans (1)" }));
+    await user.click(screen.getByRole("button", { name: "Open plan" }));
+    expect(screen.getByText("Unseated guests (1)")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Saved plans (1)" }));
+    await user.click(screen.getByRole("button", { name: "Delete saved layout" }));
+    expect(screen.getByText(/No versions yet/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(screen.getByRole("button", { name: "Plan 1" })).toBeInTheDocument();
+  });
+});
+
+it("protects an unreadable local session from automatic overwriting", async () => {
+  const unreadable = "{not-json";
+  localStorage.setItem(storageKey, unreadable);
+  render(<App />);
+  expect(screen.getByRole("status")).toHaveTextContent("Local saving paused");
+  expect(screen.getByRole("alert")).toHaveTextContent("has not been overwritten");
+  fireEvent(window, new Event("pagehide"));
+  expect(localStorage.getItem(storageKey)).toBe(unreadable);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Start fresh" }));
+  await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Start fresh" }));
+  await waitFor(() => expect(saved().guestText).toBe(""));
+});
+
+it("adds a seating pair only after the user chooses two different guests", async () => {
+  const user = userEvent.setup();
+  seed({ ...initial, constraints: [], activePlan: null });
+  render(<App />);
+  await user.click(screen.getByText("Seating preferences", { selector: "summary" }));
+  await user.click(screen.getByRole("button", { name: "Add Seat near each other pair" }));
+  const form = screen.getByRole("button", { name: "Add pair" }).closest("form")!;
+  expect(within(form).getByRole("button", { name: "Add pair" })).toBeDisabled();
+  await user.selectOptions(within(form).getByLabelText("First guest"), "guest-1-jane-smith");
+  expect(within(form).getByRole("option", { name: "Jane Smith", selected: false })).toBeDisabled();
+  await user.selectOptions(within(form).getByLabelText("Second guest"), "guest-3-sam-jones");
+  await user.click(within(form).getByRole("button", { name: "Add pair" }));
+  await waitFor(() => expect(saved().constraints).toHaveLength(1));
+  expect(saved().constraints[0]).toMatchObject({ guestAId: "guest-1-jane-smith", guestBId: "guest-3-sam-jones" });
+});
+
+it("restores and explains end-seat issues from a legacy backup", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+  await restoreBackup(user, { ...initial, constraints: [{ id: "end", type: "avoid_head", guestId: "guest-1-jane-smith" }], activePlan: { ...initial.activePlan!, assignments: { 19: "guest-1-jane-smith", 1: "guest-3-sam-jones" } } });
+  expect(screen.getByText("End-seat issues")).toBeInTheDocument();
+  expect(screen.getByText(/should avoid end seats/)).toBeInTheDocument();
+  expect(screen.getByText("0 of 1 end-seat preferences met")).toBeInTheDocument();
+});
+
+it("provides an explicit rename that preserves seats and preferences before inserting another guest", async () => {
+  const user = userEvent.setup();
+  seed();
+  render(<App />);
+  await user.click(screen.getByRole("button", { name: "1. Setup" }));
+  await user.click(screen.getByText("View guest list (3)"));
+  await user.click(screen.getByRole("button", { name: "Rename Jane Smith" }));
+  await user.clear(screen.getByLabelText("Guest name"));
+  await user.type(screen.getByLabelText("Guest name"), "Jane Cooper");
+  await user.click(screen.getByRole("button", { name: "Apply name" }));
+  await editGuests(user, "Robin Green\nSam Jones\nJane Cooper\nAlex Brown");
+  await waitFor(() => expect(saved().guestText).toContain("Robin Green"));
+  expect(saved().activePlan?.assignments).toEqual(initial.activePlan?.assignments);
+  expect(saved().constraints).toEqual(initial.constraints);
 });

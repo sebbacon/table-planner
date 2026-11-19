@@ -171,3 +171,13 @@ describe("planner backup", () => {
     );
   });
 });
+
+it("round-trips stable guest identities and explicit group-mixing settings", () => {
+  const data: PlannerData = { guestText: "Jane Cooper\nSam Jones", guestIds: ["jane", "sam"], constraints: [], activePlan: null, savedLayouts: [], mixGroups: false };
+  expect(parsePlannerBackupJson(JSON.stringify(createPlannerBackup(data)))).toMatchObject(data);
+});
+
+it.each([["same", "same"], ["one"], [1, 2]])("ignores invalid persisted guest identities: %j", (...guestIds) => {
+  const parsed = parsePlannerBackupJson(JSON.stringify({ version: 1, guestText: "Jane\nSam", guestIds, constraints: [], activePlan: null }));
+  expect(parsed.guestIds).toBeUndefined();
+});

@@ -163,3 +163,15 @@ function planWith(assignments: Record<number, string>): Plan {
     holdingGuestIds: []
   };
 }
+
+it("can turn off group mixing without changing explicit preference scores", () => {
+  const grouped = guests.map((guest) => ({ ...guest, groups: ["Family"] }));
+  const plan: Plan = { id: "mixing", assignments: { 1: "a", 2: "b", 3: "c", 4: "d" }, holdingGuestIds: [] };
+  const constraint: ConstraintPair = { id: "near", type: "prefer_adjacent", guestAId: "a", guestBId: "b" };
+  const enabled = scorePlan(plan, grouped, [constraint], layout, true);
+  const disabled = scorePlan(plan, grouped, [constraint], layout, false);
+  expect(enabled.groupPoints).toBeLessThan(0);
+  expect(disabled.groupPoints).toBe(0);
+  expect(disabled.constraintPoints).toBe(enabled.constraintPoints);
+  expect(disabled.total).toBe(disabled.constraintPoints);
+});

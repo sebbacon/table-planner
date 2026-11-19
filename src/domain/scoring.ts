@@ -55,7 +55,8 @@ export function scorePlan(
   plan: Plan,
   guests: Guest[],
   constraints: Constraint[],
-  layout: SeatingLayout
+  layout: SeatingLayout,
+  mixGroups = true
 ): ScoreBreakdown {
   const guestsById = new Map(guests.map((guest) => [guest.id, guest]));
   const guestSeatIds = getGuestSeatIds(plan.assignments);
@@ -73,7 +74,7 @@ export function scorePlan(
   const avoidPoints = sumPoints(avoided);
   const headSeatPoints = headSeat.reduce((total, result) => total + result.points, 0);
   const constraintPoints = preferencePoints + avoidPoints + headSeatPoints;
-  const groupPoints = adjacencyGroup.points;
+  const groupPoints = mixGroups ? adjacencyGroup.points : 0;
 
   return {
     total: constraintPoints + groupPoints,
