@@ -1,6 +1,7 @@
 import { getSeatIdsForTable, getSeatProximity, isHeadSeat } from "./seating";
 import { createEmptyAssignments, getGuestSeatIds, scorePlan } from "./scoring";
 import { isHeadSeatConstraint, isPairConstraint } from "./types";
+import { findPreferredTable, getTablePullWeight, isHeadSwapAllowed } from "./solverPreferences";
 import type { Constraint, ConstraintPair, Guest, Plan, ScoreBreakdown, SeatingLayout, SeatAssignments, SeatProximity, PairStrength } from "./types";
 
 export interface ScoredPlan {
@@ -107,14 +108,20 @@ function computeTableCaps(tableSeatIds: number[][], n: number): number[] {
   let remaining = n;
 
   for (let i = 0; i < tableSeatIds.length; i++) {
-    if (i === tableSeatIds.length - 1) {
-      caps.push(Math.min(tableSeatIds[i].length, remaining));
-    } else {
-      const share = Math.round((tableSeatIds[i].length / total) * n);
-      const cap = Math.min(tableSeatIds[i].length, share);
-      caps.push(cap);
-      remaining -= cap;
-    }
+    const share = i === tableSeatIds.length - 1
+      ? remaining
+      : Math.round((tableSeatIds[i].length / total) * n);
+    const cap = Math.min(tableSeatIds[i].length, share, remaining);
+    caps.push(cap);
+    remaining -= cap;
+  }
+
+  // With many sparsely occupied tables, rounding can leave more guests than
+  // the final table can hold. Allocate that remainder to earlier spare seats.
+  for (let i = 0; i < caps.length && remaining > 0; i++) {
+    const extra = Math.min(tableSeatIds[i].length - caps[i], remaining);
+    caps[i] += extra;
+    remaining -= extra;
   }
 
   return caps;
@@ -153,37 +160,15 @@ function partitionGuestsByTable(
     return best;
   }
 
-  const strengthWeight: Record<string, number> = { high: 3, medium: 2, low: 1 };
-
   // Return the table that constraint partners of these guests are already on,
   // weighted by strength. Returns null if no pull or pulled table is full.
   function pullTable(guestIdsToPlace: string[]): number | null {
-    const pull = new Map<number, number>(tableIds.map((id) => [id, 0]));
-    for (const guestId of guestIdsToPlace) {
-      for (const p of preferPairs) {
-        const partnerId = p.guestAId === guestId ? p.guestBId : p.guestBId === guestId ? p.guestAId : null;
-        if (!partnerId) continue;
-        const partnerTable = tableOf.get(partnerId);
-        if (partnerTable === undefined) continue;
-        pull.set(partnerTable, (pull.get(partnerTable) ?? 0) + (strengthWeight[p.strength ?? "medium"] ?? 2));
-      }
-    }
-    let bestTable: number | null = null;
-    let bestPull = 0;
-    for (const [tableId, p] of pull.entries()) {
-      if (p > bestPull) {
-        const idx = tableIds.indexOf(tableId);
-        if ((counts.get(tableId) ?? 0) < caps[idx]) {
-          bestPull = p;
-          bestTable = tableId;
-        }
-      }
-    }
-    return bestTable;
+    const availableTableIds = tableIds.filter((id, i) => (counts.get(id) ?? 0) < caps[i]);
+    return findPreferredTable(guestIdsToPlace, preferPairs, tableOf, availableTableIds);
   }
 
   const sortedPairs = [...preferPairs].sort(
-    (a, b) => (strengthWeight[b.strength ?? "medium"] ?? 2) - (strengthWeight[a.strength ?? "medium"] ?? 2)
+    (a, b) => getTablePullWeight(b) - getTablePullWeight(a)
   );
 
   for (const pair of sortedPairs) {
@@ -240,7 +225,8 @@ function assignToTable(
   const nonHeadQueue = shuffle(tableSeatIds.filter((id) => !isHeadSeat(id, layout)), rng);
 
   const preferHead = shuffle(guestIds.filter((id) => preferHeadIds.has(id)), rng);
-  const avoidHead = shuffle(guestIds.filter((id) => avoidHeadIds.has(id)), rng);
+  // A guest with conflicting preferences is handled once, by the first queue.
+  const avoidHead = shuffle(guestIds.filter((id) => avoidHeadIds.has(id) && !preferHeadIds.has(id)), rng);
   const free = shuffle(guestIds.filter((id) => !preferHeadIds.has(id) && !avoidHeadIds.has(id)), rng);
 
   for (const guestId of preferHead) {
@@ -434,32 +420,6 @@ function isTableSwapAllowed(
   const guestB = assignments[seatBId];
   if (guestA && highStrengthGuestIds.has(guestA)) return false;
   if (guestB && highStrengthGuestIds.has(guestB)) return false;
-  return true;
-}
-
-function isHeadSwapAllowed(
-  seatAId: number,
-  seatBId: number,
-  assignments: SeatAssignments,
-  preferHeadIds: Set<string>,
-  avoidHeadIds: Set<string>,
-  layout: SeatingLayout
-): boolean {
-  if (preferHeadIds.size === 0 && avoidHeadIds.size === 0) return true;
-
-  const aIsHead = isHeadSeat(seatAId, layout);
-  const bIsHead = isHeadSeat(seatBId, layout);
-
-  if (aIsHead === bIsHead) return true;
-
-  const guestA = assignments[seatAId];
-  const guestB = assignments[seatBId];
-
-  if (guestA && preferHeadIds.has(guestA) && aIsHead && !bIsHead) return false;
-  if (guestB && preferHeadIds.has(guestB) && bIsHead && !aIsHead) return false;
-  if (guestA && avoidHeadIds.has(guestA) && !aIsHead && bIsHead) return false;
-  if (guestB && avoidHeadIds.has(guestB) && !bIsHead && aIsHead) return false;
-
   return true;
 }
 

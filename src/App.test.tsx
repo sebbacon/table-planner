@@ -9,6 +9,70 @@ describe("App", () => {
     localStorage.clear();
   });
 
+  it.each([
+    {
+      action: "removes a seated guest",
+      guestText: "Jane Smith\nAlex Brown",
+      expectedPlan: {
+        id: "plan-1", assignments: { 1: "guest-1-jane-smith", 2: null, 3: null },
+        holdingGuestIds: ["guest-2-alex-brown"]
+      },
+      heldNames: ["Alex"], seatedNames: ["Jane"]
+    },
+    {
+      action: "adds a guest to holding",
+      guestText: "Jane Smith\nAlex Brown\nSam Jones\nRobin Green",
+      expectedPlan: {
+        id: "plan-1", assignments: { 1: "guest-1-jane-smith", 2: "guest-3-sam-jones", 3: null },
+        holdingGuestIds: ["guest-2-alex-brown", "guest-4-robin-green"]
+      },
+      heldNames: ["Alex", "Robin"], seatedNames: ["Jane", "Sam"]
+    },
+    {
+      action: "clears the guest list",
+      guestText: "",
+      expectedPlan: null,
+      heldNames: [], seatedNames: []
+    }
+  ])("reconciles and persists the plan when an edit $action", async ({
+    guestText, expectedPlan, heldNames, seatedNames
+  }) => {
+    const user = userEvent.setup();
+    localStorage.setItem("table-planner-state-v2", JSON.stringify({
+      guestText: "Jane Smith\nAlex Brown\nSam Jones",
+      constraints: [],
+      activePlan: {
+        id: "plan-1",
+        assignments: { 1: "guest-1-jane-smith", 2: "guest-3-sam-jones", 3: null },
+        // Reconciliation must also remove stale and already-seated holding entries.
+        holdingGuestIds: ["guest-2-alex-brown", "guest-1-jane-smith", "removed-guest"]
+      }
+    }));
+    render(<App />);
+    await screen.findByText("3 guests for 39 seats");
+    await user.click(screen.getByRole("button", { name: /^edit$/i }));
+    fireEvent.change(screen.getByLabelText("Guest list"), { target: { value: guestText } });
+
+    if (expectedPlan) {
+      const seating = within(screen.getByLabelText("Seating layout"));
+      const holding = within(screen.getByText("Holding Area").parentElement!);
+      expect(seating.queryAllByRole("button")).toHaveLength(seatedNames.length);
+      for (const name of seatedNames) {
+        expect(seating.getByRole("button", { name: new RegExp(`^${name}`) })).toBeInTheDocument();
+      }
+      expect(holding.queryAllByRole("button").map((button) => button.textContent?.trim()))
+        .toEqual(heldNames);
+    } else {
+      expect(screen.queryByLabelText("Seating layout")).not.toBeInTheDocument();
+      expect(screen.queryByText("Holding Area")).not.toBeInTheDocument();
+    }
+    await waitFor(() => {
+      const saved = JSON.parse(localStorage.getItem("table-planner-state-v2") ?? "{}");
+      expect(saved.guestText).toBe(guestText);
+      expect(saved.activePlan).toEqual(expectedPlan);
+    }, { timeout: 2000 });
+  });
+
   it("loads placeholder guests and renders the fixed 39-seat plan", async () => {
     const user = userEvent.setup();
 

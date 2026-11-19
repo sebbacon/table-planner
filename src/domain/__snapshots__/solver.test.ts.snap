@@ -1,0 +1,88 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`generatePlans > preserves seeded constraint search results (seed 10) 1`] = `
+[
+  {
+    "holding": [
+      "g39",
+      "g40",
+    ],
+    "score": {
+      "constraintPoints": 568,
+      "groupPoints": -33,
+      "total": 535,
+    },
+    "seats": "g34|g17|g30|g12|g11|g24|g21|g2|g1|g32|g33|g8|g9|g10|g35|g27|g36|g18|g0|g7|g31|g13|g16|g23|g19|g38|g37|g26|g5|g4|g3|g22|g15|g28|g20|g25|g29|g6|g14",
+  },
+  {
+    "holding": [
+      "g39",
+      "g40",
+    ],
+    "score": {
+      "constraintPoints": 560,
+      "groupPoints": -33,
+      "total": 527,
+    },
+    "seats": "g29|g26|g27|g37|g9|g10|g11|g12|g1|g31|g22|g28|g34|g13|g36|g35|g32|g2|g0|g3|g4|g5|g20|g25|g14|g23|g24|g17|g38|g21|g15|g19|g18|g33|g30|g6|g7|g16|g8",
+  },
+]
+`;
+
+exports[`generatePlans > preserves seeded constraint search results (seed 42) 1`] = `
+[
+  {
+    "holding": [
+      "g39",
+      "g40",
+    ],
+    "score": {
+      "constraintPoints": 578,
+      "groupPoints": -34,
+      "total": 544,
+    },
+    "seats": "g38|g9|g10|g11|g30|g26|g37|g20|g25|g23|g24|g17|g12|g27|g31|g28|g2|g1|g0|g35|g13|g21|g15|g16|g29|g8|g33|g5|g14|g36|g34|g32|g22|g19|g7|g6|g3|g18|g4",
+  },
+  {
+    "holding": [
+      "g39",
+      "g40",
+    ],
+    "score": {
+      "constraintPoints": 540,
+      "groupPoints": -25,
+      "total": 515,
+    },
+    "seats": "g27|g17|g21|g24|g29|g30|g33|g2|g1|g18|g12|g22|g23|g35|g26|g9|g10|g11|g0|g16|g19|g32|g28|g20|g25|g38|g5|g4|g36|g31|g6|g7|g8|g37|g14|g13|g34|g15|g3",
+  },
+]
+`;
+
+exports[`generatePlans > preserves seeded constraint search results (seed 99) 1`] = `
+[
+  {
+    "holding": [
+      "g39",
+      "g40",
+    ],
+    "score": {
+      "constraintPoints": 570,
+      "groupPoints": -36,
+      "total": 534,
+    },
+    "seats": "g13|g34|g14|g11|g10|g9|g28|g36|g33|g21|g23|g31|g12|g24|g29|g15|g2|g1|g0|g8|g7|g6|g38|g16|g25|g20|g32|g19|g17|g30|g22|g27|g35|g37|g26|g5|g4|g18|g3",
+  },
+  {
+    "holding": [
+      "g39",
+      "g40",
+    ],
+    "score": {
+      "constraintPoints": 552,
+      "groupPoints": -30,
+      "total": 522,
+    },
+    "seats": "g38|g35|g21|g29|g31|g12|g11|g10|g9|g36|g33|g30|g34|g28|g24|g23|g2|g1|g0|g27|g26|g15|g13|g17|g8|g7|g6|g16|g25|g20|g19|g14|g22|g3|g4|g5|g18|g32|g37",
+  },
+]
+`;
