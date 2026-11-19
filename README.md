@@ -15,6 +15,15 @@ Then open [http://localhost:5173](http://localhost:5173).
 
 If you have [just](https://github.com/casey/just) installed, `just` also works.
 
+## Code quality
+
+- `npm run lint` / `just lint`: ESLint recommended JavaScript and TypeScript checks.
+- `npm run test:coverage` / `just coverage`: tests with V8 coverage for all source files, including untested files. Open `coverage/index.html`; JSON and LCOV reports are also generated.
+- `npm run metrics:crap` / `just crap`: refresh coverage and rank the top 20 function hotspots; all results are saved to `coverage/crap.json`.
+- `npm run check` / `just check`: lint, coverage, CRAP report, and production build.
+
+CRAP is `complexity² × (1 − coverage)³ + complexity`, with coverage as a fraction. Complexity uses ESLint's classic cyclomatic complexity. Function coverage here is the fraction of executable statement-start lines covered inside that function, excluding nested functions (empty functions use their invocation count). This is a line-based approximation, not branch coverage. Scores of 30 or more are highlighted by count for review; metrics are informational and do not impose a quality gate. Generated reports are ignored by git.
+
 ## How to use
 
 ### 1. Configure your tables

@@ -20,6 +20,18 @@ restart:
 test:
     npm test
 
+lint:
+    npm run lint
+
+coverage:
+    npm run test:coverage
+
+crap:
+    npm run metrics:crap
+
+check:
+    npm run check
+
 build:
     npm run build
 

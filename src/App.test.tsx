@@ -20,7 +20,7 @@ describe("App", () => {
 
     expect(screen.getByText("39 guests for 39 seats")).toBeInTheDocument();
     expect(screen.getByLabelText("Seating layout")).toBeInTheDocument();
-    expect(screen.getByText("39")).toBeInTheDocument();
+    expect(screen.getByText("39", { selector: ".seat-number" })).toBeInTheDocument();
   });
 
   it("shows only first names on seating labels", async () => {
@@ -198,11 +198,20 @@ describe("App", () => {
     await screen.findByText("Missed good pairs");
 
     const missedName = screen.getByRole("button", { name: "Jane Smith" });
-    const seatedLabel = screen.getByRole("button", { name: "Jane" });
+    // Scope to the seating plan; jsdom also includes the print surname in
+    // the accessible name because it does not apply the app's styles.
+    const seatedLabel = within(screen.getByLabelText("Seating layout"))
+      .getByRole("button", { name: /^Jane/ });
+
+    expect(seatedLabel).not.toHaveClass("highlighted");
 
     await user.hover(missedName);
 
     expect(seatedLabel).toHaveClass("highlighted");
+
+    await user.unhover(missedName);
+
+    expect(seatedLabel).not.toHaveClass("highlighted");
   });
 
   it("imports and scores head-seat constraints", async () => {

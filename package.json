@@ -7,7 +7,12 @@
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
     "test": "vitest run",
-    "preview": "vite preview --host 0.0.0.0"
+    "preview": "vite preview --host 0.0.0.0",
+    "lint": "eslint .",
+    "test:coverage": "vitest run --coverage",
+    "metrics:crap": "npm run test:coverage && node scripts/crap.mjs",
+    "check": "npm run lint && npm run metrics:crap && npm run build",
+    "test:metrics": "node --test scripts/crap-check.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.1.1",
@@ -19,12 +24,17 @@
     "vite": "^7.2.7"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.1",
     "@testing-library/user-event": "^14.6.1",
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
+    "@vitest/coverage-v8": "^4.1.7",
+    "eslint": "^9.39.5",
+    "globals": "^17.14.0",
     "jsdom": "^27.3.0",
+    "typescript-eslint": "^8.72.2",
     "vitest": "^4.0.15"
   }
 }

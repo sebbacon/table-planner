@@ -23,7 +23,7 @@ import { createPlannerBackup, parsePlannerBackupJson, type PlannerData } from ".
 import { analyzeConstraints, type ConstraintAnalysis } from "./domain/constraintAnalysis";
 import { readFileText } from "./domain/file";
 import { buildSeatingLayout } from "./domain/seating";
-import { createEmptyAssignments, createInitialPlan, scorePlan } from "./domain/scoring";
+import { createInitialPlan, scorePlan } from "./domain/scoring";
 import { DEFAULT_EFFORT, EFFORT_LEVELS, generatePlans, type ScoredPlan } from "./domain/solver";
 import { spreadsheetFileToGuestText } from "./domain/spreadsheet";
 import {
@@ -922,7 +922,6 @@ function TablePlan({ plan, layout, guestsById, highlightedGuestId, onDragStart, 
         const seatsPerSide = config.seatsPerSide;
         const hasLeft = config.leftEnd;
         const hasRight = config.rightEnd;
-        const colCount = seatsPerSide + (hasLeft ? 1 : 0) + (hasRight ? 1 : 0);
         const sideColStart = hasLeft ? 2 : 1;
         const gridTemplateColumns = [
           hasLeft ? "4.5rem" : "",
