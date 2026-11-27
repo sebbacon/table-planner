@@ -1402,24 +1402,21 @@ function VenueSetup({
   onConfirm
 }: VenueSetupProps) {
   const [tables, setTables] = useState<TableConfig[]>(config.tables);
-  let nextId = Math.max(0, ...tables.map(t => t.id)) + 1;
-  function addRect() {
-    setTables([...tables, {
-      kind: "rect",
-      id: nextId++,
-      label: `Table ${nextId - 1}`,
-      seatsPerSide: 9,
-      leftEnd: false,
-      rightEnd: true
-    }]);
-  }
-  function addCircular() {
-    setTables([...tables, {
-      kind: "circular",
-      id: nextId++,
-      label: `Table ${nextId - 1}`,
-      seats: 8
-    }]);
+  const [quantity, setQuantity] = useState("1");
+  const [shape, setShape] = useState<TableConfig["kind"]>("circular");
+  const [roundSeats, setRoundSeats] = useState("8");
+  const [seatsPerSide, setSeatsPerSide] = useState("9");
+  const [leftEnd, setLeftEnd] = useState(false);
+  const [rightEnd, setRightEnd] = useState(true);
+  function appendTables(template: TableConfig, count: number) {
+    setTables(current => {
+      const nextId = Math.max(0, ...current.map(table => table.id)) + 1;
+      return [...current, ...Array.from({ length: count }, (_, index) => ({
+        ...template,
+        id: nextId + index,
+        label: `Table ${nextId + index}`
+      }))];
+    });
   }
   function removeTable(id: number) {
     setTables(tables.filter(t => t.id !== id));
@@ -1430,6 +1427,36 @@ function VenueSetup({
   return <div className="venue-setup">
     <h2>Table setup</h2>
     <p className="venue-setup-hint">Match the tables to your venue. Layout changes clear seating plans; guests and preferences are kept.</p>
+    <form className="venue-setup-add" onSubmit={event => {
+      event.preventDefault();
+      appendTables(shape === "circular"
+        ? { kind: "circular", id: 0, seats: Number(roundSeats) }
+        : { kind: "rect", id: 0, seatsPerSide: Number(seatsPerSide), leftEnd, rightEnd }, Number(quantity));
+    }}>
+      <h3>Add tables</h3>
+      <div className="venue-setup-table-fields">
+        <label>Number of tables
+          <input type="number" min={1} max={100} step={1} required value={quantity} onChange={event => setQuantity(event.target.value)} />
+        </label>
+        <label>Shape
+          <select value={shape} onChange={event => setShape(event.target.value as TableConfig["kind"])}>
+            <option value="circular">Round</option>
+            <option value="rect">Long</option>
+          </select>
+        </label>
+        {shape === "circular" ? <label>Seats per table
+          <input type="number" min={3} max={30} step={1} required value={roundSeats} onChange={event => setRoundSeats(event.target.value)} />
+        </label> : <>
+          <label>Seats per side for new tables
+            <input type="number" min={1} max={20} step={1} required value={seatsPerSide} onChange={event => setSeatsPerSide(event.target.value)} />
+          </label>
+          <label><input type="checkbox" checked={leftEnd} onChange={event => setLeftEnd(event.target.checked)} />New tables: head seat (left end)</label>
+          <label><input type="checkbox" checked={rightEnd} onChange={event => setRightEnd(event.target.checked)} />New tables: head seat (right end)</label>
+        </>}
+        <button type="submit"><Plus size={14} />{quantity === "1" ? "Add table" : "Add tables"}</button>
+      </div>
+      <p>Added tables appear below with new numbers. Existing tables stay as they are.</p>
+    </form>
     <div className="venue-setup-tables">
       {tables.map(table => <div className="venue-setup-table" key={table.id}>
         <div className="venue-setup-table-header">
@@ -1438,6 +1465,7 @@ function VenueSetup({
             label: e.target.value
           })} placeholder="Table name" />
           <span className="venue-setup-kind">{table.kind === "rect" ? "Long table" : "Circular"}</span>
+          <button type="button" onClick={() => appendTables(table, 1)} aria-label={`Duplicate table ${table.id}`}>Duplicate</button>
           <button type="button" onClick={() => removeTable(table.id)} aria-label="Remove table">
             <Trash2 size={14} />
           </button>
@@ -1476,8 +1504,6 @@ function VenueSetup({
       </div>)}
     </div>
     <div className="venue-setup-actions">
-      <button type="button" onClick={addRect}><Plus size={14} /> Long table</button>
-      <button type="button" onClick={addCircular}><Plus size={14} /> Circular table</button>
       <button type="button" className="primary-button" disabled={tables.length === 0} onClick={() => onConfirm({
         tables
       })}>

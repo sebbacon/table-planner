@@ -182,6 +182,67 @@ describe("stable guests and saved data", () => {
     await waitFor(() => expect(saved().activePlan).toEqual(initial.activePlan));
   });
 
+  it("adds a batch of round tables without changing existing tables and reloads it", async () => {
+    const user = userEvent.setup();
+    const tables = [{ id: 7, kind: "circular" as const, label: "Family", seats: 5 }];
+    seed({ ...initial, activePlan: null, venueConfig: { tables } });
+    const view = render(<App />);
+    await user.click(screen.getByRole("button", { name: "Change tables" }));
+    fireEvent.change(screen.getByLabelText("Number of tables"), { target: { value: "12" } });
+    fireEvent.change(screen.getByLabelText("Seats per table"), { target: { value: "10" } });
+    await user.click(screen.getByRole("button", { name: "Add tables" }));
+    expect(screen.getByLabelText("Table 19 name")).toHaveValue("Table 19");
+    await user.click(screen.getByRole("button", { name: "Use these tables" }));
+    await waitFor(() => expect(saved().venueConfig?.tables).toHaveLength(13));
+    expect(saved().venueConfig?.tables[0]).toEqual(tables[0]);
+    expect(saved().venueConfig?.tables.slice(1)).toEqual(Array.from({ length: 12 }, (_, i) => ({ id: i + 8, label: `Table ${i + 8}`, kind: "circular", seats: 10 })));
+    expect(saved().guestText).toBe(initial.guestText);
+    expect(saved().constraints).toEqual(initial.constraints);
+    view.unmount();
+    render(<App />);
+    expect(screen.getByText(/13 tables · 125 seats/)).toBeInTheDocument();
+  });
+
+  it("adds long tables and duplicates their full geometry with unique IDs", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Change tables" }));
+    await user.selectOptions(screen.getByLabelText("Shape"), "rect");
+    fireEvent.change(screen.getByLabelText("Number of tables"), { target: { value: "2" } });
+    fireEvent.change(screen.getByLabelText("Seats per side for new tables"), { target: { value: "6" } });
+    await user.click(screen.getByLabelText("New tables: head seat (left end)"));
+    await user.click(screen.getByLabelText("New tables: head seat (right end)"));
+    await user.click(screen.getByRole("button", { name: "Add tables" }));
+    await user.click(screen.getByRole("button", { name: "Duplicate table 3" }));
+    await user.click(screen.getByRole("button", { name: "Use these tables" }));
+    await waitFor(() => expect(saved().venueConfig?.tables).toHaveLength(5));
+    expect(saved().venueConfig?.tables.slice(2)).toEqual([3, 4, 5].map(id => ({ id, label: `Table ${id}`, kind: "rect", seatsPerSide: 6, leftEnd: true, rightEnd: false })));
+  });
+
+  it("preserves an existing session through upgrade, cancelled drafts, and undo", async () => {
+    const user = userEvent.setup();
+    const data: PlannerData = { ...initial, mixGroups: false, venueConfig: { tables: [{ id: 9, kind: "circular", label: "Dinner", seats: 5 }] }, savedLayouts: [{ id: "kept", name: "Original", savedAt: "2026-01-01", plan: initial.activePlan!, scoreTotal: 12 }] };
+    seed(data);
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Saved in this browser"));
+    expect(saved()).toMatchObject(data);
+    await user.click(screen.getByRole("button", { name: "1. Setup" }));
+    await user.click(screen.getByRole("button", { name: "Change tables" }));
+    await user.click(screen.getByRole("button", { name: "Duplicate table 9" }));
+    await user.click(screen.getByRole("button", { name: "Cancel table changes" }));
+    expect(saved()).toMatchObject(data);
+    await user.click(screen.getByRole("button", { name: "Change tables" }));
+    expect(screen.queryByLabelText("Table 10 name")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Duplicate table 9" }));
+    await user.click(screen.getByRole("button", { name: "Use these tables" }));
+    expect(saved()).toMatchObject(data);
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Change tables" }));
+    await waitFor(() => expect(saved().venueConfig?.tables).toHaveLength(2));
+    expect(saved().venueConfig?.tables[1]).toEqual({ id: 10, label: "Table 10", kind: "circular", seats: 5 });
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(saved()).toMatchObject(data));
+  });
+
   it("round-trips custom tables, stable guest IDs, group settings, and kept versions via the UI backup", async () => {
     const user = userEvent.setup();
     const data: PlannerData = { ...initial, guestIds: ["jane", "alex", "sam"], mixGroups: false, constraints: [], venueConfig: { tables: [{ id: 1, kind: "circular", label: "Dinner", seats: 5 }] }, activePlan: { id: "round", assignments: { 1: "jane", 2: "sam" }, holdingGuestIds: ["alex"] } };
