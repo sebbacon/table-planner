@@ -58,6 +58,23 @@ export function getSeatProximity(
   return getProximityBySeat(seatA, seatB, tableConfig);
 }
 
+// Distance in seat-spacing units. Room-canvas coordinates are illustrative
+// and deliberately do not affect the seating geometry.
+export function getSeatDistance(seatAId: number, seatBId: number, layout: SeatingLayout): number {
+  const a = layout.seatsById.get(seatAId);
+  const b = layout.seatsById.get(seatBId);
+  if (!a || !b || a.tableId !== b.tableId) return 0;
+  const table = layout.tableConfigs.get(a.tableId)!;
+  if (table.kind === "circular") {
+    const steps = Math.abs(a.position - b.position);
+    return Math.min(steps, table.seats - steps);
+  }
+  const coordinate = (seat: Seat) => ({ x: seat.position, y: seat.side === "top" ? -1 : seat.side === "bottom" ? 1 : 0 });
+  const from = coordinate(a);
+  const to = coordinate(b);
+  return Math.hypot(from.x - to.x, from.y - to.y);
+}
+
 export function isHeadSeat(seatId: number, layout: SeatingLayout): boolean {
   return layout.headSeatIds.includes(seatId);
 }

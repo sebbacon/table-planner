@@ -380,7 +380,7 @@ describe("review and manual adjustments", () => {
     expect(screen.getByText("Unseated guests (1)").parentElement).toHaveTextContent("Alex Brown");
   });
 
-  it("highlights guests from actionable issues, and persists distance changes", async () => {
+  it("highlights guests from actionable issues, and persists preference and priority independently", async () => {
     const user = userEvent.setup();
     seed({ ...initial, activePlan: { ...initial.activePlan!, assignments: { 1: "guest-1-jane-smith", 28: "guest-3-sam-jones" } } });
     render(<App />);
@@ -389,8 +389,15 @@ describe("review and manual adjustments", () => {
     expect(within(screen.getByLabelText("Seating layout")).getByRole("button", { name: "Jane Smith" })).toHaveClass("highlighted");
     await user.click(screen.getByRole("button", { name: "1. Setup" }));
     await user.click(screen.getByText("Seating preferences", { selector: "summary" }));
-    await user.selectOptions(screen.getByLabelText("Seating distance"), "high");
-    await waitFor(() => expect(saved().constraints[0]).toMatchObject({ strength: "high" }));
+    expect(screen.getByLabelText("Seating preference")).toHaveValue("chat");
+    expect(screen.getByLabelText("Priority")).toHaveValue("normal");
+    await user.selectOptions(screen.getByLabelText("Seating preference"), "same_table");
+    await user.selectOptions(screen.getByLabelText("Priority"), "high");
+    await waitFor(() => expect(saved().constraints[0]).toMatchObject({ preference: "same_table", priority: "high" }));
+    await user.selectOptions(screen.getByLabelText("Seating preference"), "next_to");
+    expect(screen.getByLabelText("Priority")).toHaveValue("high");
+    await user.selectOptions(screen.getByLabelText("Priority"), "normal");
+    expect(screen.getByLabelText("Seating preference")).toHaveValue("next_to");
   });
 
   it("warns before printing an incomplete plan", async () => {
@@ -452,7 +459,7 @@ it("adds a seating pair only after the user chooses two different guests", async
   await user.selectOptions(within(form).getByLabelText("Second guest"), "guest-3-sam-jones");
   await user.click(within(form).getByRole("button", { name: "Add pair" }));
   await waitFor(() => expect(saved().constraints).toHaveLength(1));
-  expect(saved().constraints[0]).toMatchObject({ guestAId: "guest-1-jane-smith", guestBId: "guest-3-sam-jones" });
+  expect(saved().constraints[0]).toMatchObject({ guestAId: "guest-1-jane-smith", guestBId: "guest-3-sam-jones", preference: "chat", priority: "normal" });
 });
 
 it("restores and explains end-seat issues from a legacy backup", async () => {

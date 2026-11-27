@@ -8,11 +8,11 @@ exports[`generatePlans > preserves seeded constraint search results (seed 10) 1`
       "g40",
     ],
     "score": {
-      "constraintPoints": 568,
-      "groupPoints": -33,
-      "total": 535,
+      "constraintPoints": 616,
+      "groupPoints": -31,
+      "total": 585,
     },
-    "seats": "g34|g17|g30|g12|g11|g24|g21|g2|g1|g32|g33|g8|g9|g10|g35|g27|g36|g18|g0|g7|g31|g13|g16|g23|g19|g38|g37|g26|g5|g4|g3|g22|g15|g28|g20|g25|g29|g6|g14",
+    "seats": "g27|g18|g9|g10|g11|g12|g32|g37|g24|g5|g6|g7|g8|g30|g22|g19|g2|g1|g0|g26|g29|g33|g36|g35|g34|g17|g38|g31|g3|g4|g16|g14|g21|g28|g25|g20|g15|g23|g13",
   },
   {
     "holding": [
@@ -20,11 +20,11 @@ exports[`generatePlans > preserves seeded constraint search results (seed 10) 1`
       "g40",
     ],
     "score": {
-      "constraintPoints": 560,
-      "groupPoints": -33,
-      "total": 527,
+      "constraintPoints": 544,
+      "groupPoints": -30,
+      "total": 514,
     },
-    "seats": "g29|g26|g27|g37|g9|g10|g11|g12|g1|g31|g22|g28|g34|g13|g36|g35|g32|g2|g0|g3|g4|g5|g20|g25|g14|g23|g24|g17|g38|g21|g15|g19|g18|g33|g30|g6|g7|g16|g8",
+    "seats": "g15|g14|g17|g26|g21|g22|g19|g36|g1|g8|g9|g10|g11|g12|g32|g13|g34|g27|g0|g33|g35|g2|g3|g4|g29|g20|g25|g37|g28|g31|g24|g18|g30|g23|g16|g7|g6|g38|g5",
   },
 ]
 `;
@@ -37,11 +37,11 @@ exports[`generatePlans > preserves seeded constraint search results (seed 42) 1`
       "g40",
     ],
     "score": {
-      "constraintPoints": 578,
-      "groupPoints": -34,
-      "total": 544,
+      "constraintPoints": 592,
+      "groupPoints": -27,
+      "total": 565,
     },
-    "seats": "g38|g9|g10|g11|g30|g26|g37|g20|g25|g23|g24|g17|g12|g27|g31|g28|g2|g1|g0|g35|g13|g21|g15|g16|g29|g8|g33|g5|g14|g36|g34|g32|g22|g19|g7|g6|g3|g18|g4",
+    "seats": "g30|g16|g21|g24|g29|g36|g11|g2|g1|g31|g35|g17|g34|g13|g12|g3|g4|g5|g0|g7|g8|g9|g10|g20|g25|g27|g18|g37|g33|g38|g26|g23|g14|g22|g15|g28|g19|g6|g32",
   },
   {
     "holding": [
@@ -49,11 +49,11 @@ exports[`generatePlans > preserves seeded constraint search results (seed 42) 1`
       "g40",
     ],
     "score": {
-      "constraintPoints": 540,
-      "groupPoints": -25,
-      "total": 515,
+      "constraintPoints": 448,
+      "groupPoints": -27,
+      "total": 421,
     },
-    "seats": "g27|g17|g21|g24|g29|g30|g33|g2|g1|g18|g12|g22|g23|g35|g26|g9|g10|g11|g0|g16|g19|g32|g28|g20|g25|g38|g5|g4|g36|g31|g6|g7|g8|g37|g14|g13|g34|g15|g3",
+    "seats": "g16|g20|g25|g26|g35|g10|g9|g8|g29|g33|g27|g32|g21|g38|g22|g17|g36|g1|g0|g14|g31|g37|g28|g15|g30|g5|g4|g3|g23|g18|g24|g6|g7|g12|g11|g34|g19|g13|g2",
   },
 ]
 `;
@@ -66,11 +66,11 @@ exports[`generatePlans > preserves seeded constraint search results (seed 99) 1`
       "g40",
     ],
     "score": {
-      "constraintPoints": 570,
-      "groupPoints": -36,
-      "total": 534,
+      "constraintPoints": 608,
+      "groupPoints": -35,
+      "total": 573,
     },
-    "seats": "g13|g34|g14|g11|g10|g9|g28|g36|g33|g21|g23|g31|g12|g24|g29|g15|g2|g1|g0|g8|g7|g6|g38|g16|g25|g20|g32|g19|g17|g30|g22|g27|g35|g37|g26|g5|g4|g18|g3",
+    "seats": "g14|g34|g32|g11|g10|g9|g8|g38|g29|g37|g35|g27|g12|g13|g26|g28|g17|g1|g0|g36|g16|g15|g22|g21|g2|g19|g31|g20|g33|g7|g6|g5|g4|g3|g30|g23|g24|g18|g25",
   },
   {
     "holding": [
@@ -78,11 +78,11 @@ exports[`generatePlans > preserves seeded constraint search results (seed 99) 1`
       "g40",
     ],
     "score": {
-      "constraintPoints": 552,
-      "groupPoints": -30,
-      "total": 522,
+      "constraintPoints": 544,
+      "groupPoints": -29,
+      "total": 515,
     },
-    "seats": "g38|g35|g21|g29|g31|g12|g11|g10|g9|g36|g33|g30|g34|g28|g24|g23|g2|g1|g0|g27|g26|g15|g13|g17|g8|g7|g6|g16|g25|g20|g19|g14|g22|g3|g4|g5|g18|g32|g37",
+    "seats": "g38|g8|g9|g10|g11|g12|g14|g15|g22|g27|g32|g13|g24|g7|g6|g21|g31|g1|g0|g35|g29|g37|g17|g19|g26|g33|g20|g25|g36|g30|g34|g2|g3|g4|g5|g28|g23|g18|g16",
   },
 ]
 `;

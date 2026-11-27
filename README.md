@@ -36,10 +36,12 @@ Pat Morgan
 
 **Seating preferences** is optional and collapsed by default:
 
-- **Seat near each other:** neighbours, neighbours or opposite, or anywhere nearby (including diagonals). Closer-distance preferences receive more priority.
-- **Keep apart:** avoid nearby seats, including opposite and diagonal seats.
+- **Seat near each other:** choose **Sit next to each other**, **Sit where they can chat**, or **Share a table**. Chatting includes neighbours, opposite seats and diagonals on long tables, or neighbours and next-but-one on circular tables. Sharing a table gives equal credit anywhere at that table. Choose **Normal** or **High** priority independently; High doubles the scoring weight without changing which seats qualify. Expand **How seating preferences work** for illustrated examples.
+- **Keep apart:** prefer separate tables. On long tables, the penalty fades quickly with distance in seat spacings, leaving only a small penalty several seats away. On circular tables, the shared-table penalty stays constant at every distance. The review panel flags pairs still sharing a table, even when seated far apart. Room-canvas positions do not affect distance scoring.
 - **End-seat preferences:** prefer or avoid end seats on long tables. These controls appear when the venue has end seats.
 - **Mix guests from the same group:** optional mixing of group labels. Explicit seating preferences take priority. Disabled for new sessions; existing backups retain their previous group-mixing behaviour.
+
+Older backups map “Neighbours” to next-to with High priority, and “Neighbours or opposite” / “Anywhere nearby” to chatting with Normal priority. Explicit new preference and priority fields take precedence over legacy fields.
 
 These are weighted preferences, not guarantees. Conflicting preferences are flagged during setup.
 

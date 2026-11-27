@@ -1,3 +1,5 @@
+import { PreferenceGuide } from "./PreferenceGuide";
+import { getPairPreference, getPairPriority, PREFERENCE_LABELS } from "./domain/pairPreferences";
 import { roomPlanGeometry } from "./domain/roomPlan";
 import { PlanViewport } from "./PlanViewport";
 import { RoomLayout } from "./RoomLayout";
@@ -10,7 +12,7 @@ import { buildSeatingLayout } from "./domain/seating";
 import { createInitialPlan, scorePlan } from "./domain/scoring";
 import { DEFAULT_EFFORT, EFFORT_LEVELS, generatePlans, type ScoredPlan } from "./domain/solver";
 import { spreadsheetFileToGuestText } from "./domain/spreadsheet";
-import { isHeadSeatConstraint, isPairConstraint, type Constraint, type HeadSeatConstraint, type PairConstraintType, type PairStrength, type ConstraintPair, type Guest, type Plan, type SavedLayout, type ScoreBreakdown, type SeatingLayout, type TableConfig, type VenueConfig } from "./domain/types";
+import { isHeadSeatConstraint, isPairConstraint, type Constraint, type HeadSeatConstraint, type PairConstraintType, type PairPreference, type PairPriority, type ConstraintPair, type Guest, type Plan, type SavedLayout, type ScoreBreakdown, type SeatingLayout, type TableConfig, type VenueConfig } from "./domain/types";
 import { DEFAULT_VENUE_CONFIG, roomTableOrder } from "./domain/venueConfig";
 import { parseGuestText, reconcileGuestText } from "./domain/parser";
 const STORAGE_KEY = "table-planner-state-v2";
@@ -119,7 +121,7 @@ export function App() {
     };
   }, [ready, storageBlocked, guestText, guestIds, validConstraints, activePlan, savedLayouts, venueConfig, mixGroups]);
   const activeScore = useMemo(() => activePlan ? scorePlan(activePlan, guests, validConstraints, layout, mixGroups) : null, [activePlan, guests, validConstraints, layout, mixGroups]);
-  const constraintAnalysis = useMemo(() => analyzeConstraints(guests, validConstraints), [guests, validConstraints]);
+  const constraintAnalysis = useMemo(() => analyzeConstraints(guests, validConstraints, layout), [guests, validConstraints, layout]);
   const seatedGuestIds = new Set(Object.values(activePlan?.assignments ?? {}).filter(Boolean));
   const holdingGuestIds = guests.filter(guest => !seatedGuestIds.has(guest.id)).map(guest => guest.id);
   const hasTooManyGuests = guests.length > layout.seatIds.length;
@@ -491,7 +493,7 @@ export function App() {
         <p>We’ll try to meet these preferences; some may conflict. You can generate a plan without any.</p>
         <fieldset disabled={!guests.length || guestDraftChanged}>
           {!guests.length && <p className="muted-text">Add guests above to set seating preferences.</p>}
-          <PairEditor title="Seat near each other" type="prefer_adjacent" showStrength guests={guests} constraints={constraints} onChange={updateConstraints} />
+          <PairEditor title="Seat near each other" type="prefer_adjacent" showPreference guests={guests} constraints={constraints} onChange={updateConstraints} />
           <PairEditor title="Keep apart" type="avoid_adjacent" guests={guests} constraints={constraints} onChange={updateConstraints} />
           {layout.headSeatIds.length > 0 && <HeadSeatEditor guests={guests} constraints={constraints} onChange={updateConstraints} />}
           <label className="mix-setting"><input type="checkbox" checked={mixGroups} onChange={event => {
@@ -664,47 +666,28 @@ function ConstraintAnalysisPanel({
     {analysis.overloadedGuests.map(overload => {
       const guest = guestsById.get(overload.guestId);
       if (!guest) return null;
-      const badgeTone = overload.strength === "high" ? "high" : "mid";
+      const badgeTone = "mid";
       return <div key={overload.guestId} className="analysis-warning">
         <p className="analysis-warning-title">
           <PairResultName guest={guest} onGuestHighlight={onGuestHighlight} />
           {" "}has {overload.constraintCount}{" "}
-          <span className={`constraint-badge constraint-badge-${badgeTone}`}>{overload.strength}</span>
+          <span className={`constraint-badge constraint-badge-${badgeTone}`}>{PREFERENCE_LABELS[overload.preference]}</span>
           {" "}constraints — at most {overload.maxSatisfiable} can be satisfied
         </p>
         <div className="analysis-partner-list">
           {overload.pairs.map(pair => {
             const otherId = pair.guestAId === overload.guestId ? pair.guestBId : pair.guestAId;
             const other = guestsById.get(otherId);
-            const strength = pair.strength ?? "medium";
-            const tone = strength === "high" ? "high" : strength === "medium" ? "mid" : "low";
+            const priority = getPairPriority(pair);
+            const tone = priority === "high" ? "high" : "mid";
             return <span key={pair.id} className="analysis-partner-chip">
               <PairResultName guest={other} onGuestHighlight={onGuestHighlight} />
-              <span className={`constraint-badge constraint-badge-${tone}`}>{strength}</span>
+              <span className={`constraint-badge constraint-badge-${tone}`}>{priority} priority</span>
             </span>;
           })}
         </div>
       </div>;
     })}
-    {analysis.crossClusterPairs.length > 0 && <div className="analysis-warning">
-      <p className="analysis-warning-title">
-        At-risk pairs — these guests belong to competing high-priority groups and will likely end up at different tables:
-      </p>
-      {analysis.crossClusterPairs.map(({
-        pair
-      }) => {
-        const guestA = guestsById.get(pair.guestAId);
-        const guestB = guestsById.get(pair.guestBId);
-        const strength = pair.strength ?? "medium";
-        const tone = strength === "high" ? "high" : strength === "medium" ? "mid" : "low";
-        return <p key={pair.id} className="analysis-cross-pair">
-          <PairResultName guest={guestA} onGuestHighlight={onGuestHighlight} />
-          <span aria-hidden="true"> / </span>
-          <PairResultName guest={guestB} onGuestHighlight={onGuestHighlight} />
-          <span className={`constraint-badge constraint-badge-${tone}`}>{strength}</span>
-        </p>;
-      })}
-    </div>}
   </section>;
 }
 function GuestList({
@@ -746,17 +729,12 @@ function GuestList({
     })}
   </div>;
 }
-const STRENGTH_LABELS: Record<PairStrength, string> = {
-  high: "Neighbours",
-  medium: "Neighbours or opposite",
-  low: "Anywhere nearby"
-};
 interface PairEditorProps {
   title: string;
   type: PairConstraintType;
   guests: Guest[];
   constraints: Constraint[];
-  showStrength?: boolean;
+  showPreference?: boolean;
   onChange: (constraints: Constraint[]) => void;
 }
 function PairEditor({
@@ -764,14 +742,15 @@ function PairEditor({
   type,
   guests,
   constraints,
-  showStrength,
+  showPreference,
   onChange
 }: PairEditorProps) {
   const pairs = constraints.filter((constraint): constraint is ConstraintPair => isPairConstraint(constraint) && constraint.type === type);
   const [draft, setDraft] = useState<{
     guestAId: string;
     guestBId: string;
-    strength: PairStrength;
+    preference: PairPreference;
+    priority: PairPriority;
   } | null>(null);
   function alreadyAdded(a: string, b: string, except?: string) {
     return pairs.some(pair => pair.id !== except && (pair.guestAId === a && pair.guestBId === b || pair.guestAId === b && pair.guestBId === a));
@@ -784,15 +763,17 @@ function PairEditor({
       type,
       guestAId: draft.guestAId,
       guestBId: draft.guestBId,
-      ...(showStrength ? {
-        strength: draft.strength
+      ...(showPreference ? {
+        preference: draft.preference,
+        priority: draft.priority
       } : {})
     }]);
     setDraft(null);
   }
-  function updatePair(pairId: string, field: "guestAId" | "guestBId" | "strength", value: string) {
+  function updatePair(pairId: string, field: "guestAId" | "guestBId" | "preference" | "priority", value: string) {
     onChange(constraints.map(constraint => isPairConstraint(constraint) && constraint.id === pairId ? {
       ...constraint,
+      ...(constraint.type === "prefer_adjacent" ? { preference: getPairPreference(constraint), priority: getPairPriority(constraint), strength: undefined } : {}),
       [field]: value
     } : constraint));
   }
@@ -805,26 +786,13 @@ function PairEditor({
       <button type="button" className="icon-text-button" onClick={() => setDraft({
         guestAId: "",
         guestBId: "",
-        strength: "medium"
+        preference: "chat",
+        priority: "normal"
       })} disabled={guests.length < 2 || draft !== null} aria-label={`Add ${title} pair`}>
         <Plus size={16} /> Add pair
       </button>
     </div>
-    {showStrength ? <details className="distance-help">
-      <summary>What counts as nearby?</summary>
-      <div className="proximity-example" aria-hidden="true">
-        <span>Diagonal</span>
-        <span>Opposite</span>
-        <span>Diagonal</span>
-        <i />
-        <i>Table</i>
-        <i />
-        <span>Neighbour</span>
-        <strong>Guest</strong>
-        <span>Neighbour</span>
-      </div>
-      <p>Neighbours includes adjacent end seats. Anywhere nearby also includes diagonals. Closer-distance preferences receive more priority.</p>
-    </details> : <p className="muted-text">Avoid nearby seats, including opposite and diagonal seats. This is a preference, not a guarantee.</p>}
+    {showPreference ? <PreferenceGuide /> : <p className="muted-text">Prefer separate tables. On long tables, the penalty fades quickly as guests sit further apart. On circular tables, sharing a table carries the same penalty at any distance. This is a preference, not a guarantee.</p>}
     {draft && <form className="add-pair-form" onSubmit={event => {
       event.preventDefault();
       addPair();
@@ -843,12 +811,14 @@ function PairEditor({
         <option value="">Choose a guest</option>
         {guests.map(guest => <option key={guest.id} value={guest.id} disabled={guest.id === draft.guestAId}>{guest.name}</option>)}
       </select></label>
-      {showStrength && <label>Distance<select value={draft.strength} onChange={event => setDraft({
-        ...draft,
-        strength: event.target.value as PairStrength
-      })}>
-        {(["high", "medium", "low"] as PairStrength[]).map(strength => <option value={strength} key={strength}>{STRENGTH_LABELS[strength]}</option>)}
-      </select></label>}
+      {showPreference && <>
+        <label>Seating preference<select value={draft.preference} onChange={event => setDraft({ ...draft, preference: event.target.value as PairPreference })}>
+          {Object.entries(PREFERENCE_LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+        </select></label>
+        <label>Priority<select value={draft.priority} onChange={event => setDraft({ ...draft, priority: event.target.value as PairPriority })}>
+          <option value="normal">Normal</option><option value="high">High</option>
+        </select></label>
+      </>}
       {alreadyAdded(draft.guestAId, draft.guestBId) && <p className="warning-text">This pair is already on this list.</p>}
       <div className="inline-actions">
         <button type="submit" className="primary-button" disabled={!canAdd}>Add pair</button>
@@ -859,19 +829,27 @@ function PairEditor({
       {pairs.length === 0 ? <p className="muted-text">No pairs yet.</p> : null}
       {pairs.map(pair => {
         const conflict = constraints.some(c => isPairConstraint(c) && c.type !== type && (c.guestAId === pair.guestAId && c.guestBId === pair.guestBId || c.guestAId === pair.guestBId && c.guestBId === pair.guestAId));
-        const strength: PairStrength = pair.strength ?? "medium";
-        return <div className={`pair-row${showStrength ? " has-strength" : ""}`} key={pair.id}>
+        const preference = getPairPreference(pair);
+        const priority = getPairPriority(pair);
+        return <div className={`pair-row${showPreference ? " has-strength" : ""}`} key={pair.id}>
           <select aria-label="First guest" value={pair.guestAId} onChange={event => updatePair(pair.id, "guestAId", event.target.value)}>
             {guests.map(guest => <option value={guest.id} key={guest.id} disabled={guest.id === pair.guestBId || alreadyAdded(guest.id, pair.guestBId, pair.id)}>{guest.name}</option>)}
           </select>
           <select aria-label="Second guest" value={pair.guestBId} onChange={event => updatePair(pair.id, "guestBId", event.target.value)}>
             {guests.map(guest => <option value={guest.id} key={guest.id} disabled={guest.id === pair.guestAId || alreadyAdded(pair.guestAId, guest.id, pair.id)}>{guest.name}</option>)}
           </select>
-          {showStrength && <label className="distance-control">Distance
-            <select aria-label="Seating distance" value={strength} onChange={event => updatePair(pair.id, "strength", event.target.value)}>
-              {(["high", "medium", "low"] as PairStrength[]).map(value => <option key={value} value={value}>{STRENGTH_LABELS[value]}</option>)}
-            </select>
-          </label>}
+          {showPreference && <>
+            <label className="distance-control">Seating preference
+              <select aria-label="Seating preference" value={preference} onChange={event => updatePair(pair.id, "preference", event.target.value)}>
+                {Object.entries(PREFERENCE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+            </label>
+            <label className="priority-control">Priority
+              <select aria-label="Priority" value={priority} onChange={event => updatePair(pair.id, "priority", event.target.value)}>
+                <option value="normal">Normal</option><option value="high">High</option>
+              </select>
+            </label>
+          </>}
           {conflict ? <span title="This pair also appears in the opposite constraint list">
             <AlertTriangle size={15} className="conflict-icon" />
           </span> : <span />}
@@ -1136,7 +1114,7 @@ function ScorePanel({
     <h2>{issues ? `${issues} seating ${issues === 1 ? "preference" : "preferences"} to review` : score.preferred.length + score.avoided.length + score.headSeat.length ? "Seating preferences met" : "Review your plan"}</h2>
     {!score.preferred.length && !score.avoided.length && !score.headSeat.length && <p className="muted-text">No seating preferences added. You can add them in Setup.</p>}
     <div className="review-summary">
-      {score.preferred.length > 0 && <p>{score.preferred.length - missedGood.length} of {score.preferred.length} near-seating preferences met</p>}
+      {score.preferred.length > 0 && <p>{score.preferred.length - missedGood.length} of {score.preferred.length} together-seating preferences met</p>}
       {score.avoided.length > 0 && <p>{badAdjacent.length} keep-apart issues</p>}
       {score.headSeat.length > 0 && <p>{score.headSeat.length - missedHeadSeat.length} of {score.headSeat.length} end-seat preferences met</p>}
     </div>
@@ -1173,14 +1151,14 @@ function PairResults({
     {results.map(result => {
       const guestA = guestsById.get(result.pair.guestAId);
       const guestB = guestsById.get(result.pair.guestBId);
-      const strength = result.pair.strength;
-      const badgeTone = strength === "high" ? "high" : strength === "medium" ? "mid" : strength === "low" ? "low" : null;
+      const preferred = result.pair.type === "prefer_adjacent";
+      const badgeTone = getPairPriority(result.pair) === "high" ? "high" : "mid";
       return <p key={result.pair.id}>
         <PairResultName guest={guestA} onGuestHighlight={onGuestHighlight} />
         <span aria-hidden="true"> / </span>
         <PairResultName guest={guestB} onGuestHighlight={onGuestHighlight} />
-        {badgeTone && <span className={`constraint-badge constraint-badge-${badgeTone}`}>
-          {STRENGTH_LABELS[strength!]}
+        {preferred && <span className={`constraint-badge constraint-badge-${badgeTone}`}>
+          {PREFERENCE_LABELS[getPairPreference(result.pair)]} · {getPairPriority(result.pair)} priority
         </span>}
       </p>;
     })}

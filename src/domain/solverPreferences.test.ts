@@ -56,7 +56,7 @@ describe("weighted table selection", () => {
   const tableOf = new Map([["a", 10], ["b", 20], ["c", 20]]);
 
   it("adds partner weights across both guests and both constraint directions", () => {
-    const pairs = [pair("x", "a", "high"), pair("b", "x"), pair("y", "c")];
+    const pairs = [pair("x", "a", "high"), pair("b", "x"), pair("y", "c"), pair("y", "b")];
     expect(findPreferredTable(["x", "y"], pairs, tableOf, [10, 20])).toBe(20);
   });
 
@@ -65,9 +65,9 @@ describe("weighted table selection", () => {
       tableOf, [10, 20])).toBe(20);
   });
 
-  it("defaults missing strength to medium", () => {
+  it("treats legacy low and missing strength as normal priority", () => {
     expect(findPreferredTable(["x"], [pair("x", "a", "low"), pair("x", "b")],
-      tableOf, [10, 20])).toBe(20);
+      tableOf, [10, 20])).toBe(10);
   });
 
   it("breaks ties in table order rather than constraint order", () => {

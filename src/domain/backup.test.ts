@@ -181,3 +181,20 @@ it.each([["same", "same"], ["one"], [1, 2]])("ignores invalid persisted guest id
   const parsed = parsePlannerBackupJson(JSON.stringify({ version: 1, guestText: "Jane\nSam", guestIds, constraints: [], activePlan: null }));
   expect(parsed.guestIds).toBeUndefined();
 });
+
+it("round-trips seating intent and priority independently, including legacy fields", () => {
+  for (const preference of ["next_to", "chat", "same_table"] as const) {
+    for (const priority of ["normal", "high"] as const) {
+      const constraints = [{ ...pair, preference, priority, strength: "high" as const }];
+      const data = { guestText: "Jane\nSam", constraints, activePlan: null };
+      expect(parsePlannerBackupJson(JSON.stringify(createPlannerBackup(data))).constraints).toEqual(constraints);
+    }
+  }
+});
+
+it("ignores invalid intent and priority fields and excludes them from avoidance pairs", () => {
+  const data = { version: 1, guestText: "Jane\nSam", activePlan: null };
+  expect(parsePlannerBackupJson(JSON.stringify({ ...data, constraints: [{ ...pair, preference: "bad", priority: "urgent" }] })).constraints).toEqual([pair]);
+  const avoided = { ...pair, type: "avoid_adjacent" };
+  expect(parsePlannerBackupJson(JSON.stringify({ ...data, constraints: [{ ...avoided, preference: "chat", priority: "high" }] })).constraints).toEqual([avoided]);
+});

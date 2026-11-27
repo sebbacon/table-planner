@@ -23,7 +23,7 @@ const guests: Guest[] = [
 ];
 
 describe("scorePlan", () => {
-  it("rewards preferred left-right pairs most strongly (medium strength)", () => {
+  it("rewards preferred left-right pairs most strongly (default chat preference)", () => {
     const plan = planWith({ [t1.top(0)]: "a", [t1.top(1)]: "b" });
     const constraints: ConstraintPair[] = [
       { id: "pair-1", type: "prefer_adjacent", guestAId: "a", guestBId: "b" }
@@ -38,7 +38,7 @@ describe("scorePlan", () => {
     });
   });
 
-  it("scores preferred opposite pairs above diagonal pairs (medium strength)", () => {
+  it("scores preferred opposite pairs above diagonal pairs (default chat preference)", () => {
     const constraints: ConstraintPair[] = [
       { id: "pair-1", type: "prefer_adjacent", guestAId: "a", guestBId: "b" }
     ];
@@ -46,7 +46,7 @@ describe("scorePlan", () => {
     const diagonalScore = scorePlan(planWith({ [t1.top(0)]: "a", [t1.bot(1)]: "b" }), guests, constraints, layout);
 
     expect(oppositeScore.preferred[0]).toMatchObject({ proximity: "opposite", points: 32 });
-    expect(diagonalScore.preferred[0]).toMatchObject({ proximity: "diagonal", points: 8 });
+    expect(diagonalScore.preferred[0]).toMatchObject({ proximity: "diagonal", points: 24 });
     expect(oppositeScore.preferencePoints).toBeGreaterThan(diagonalScore.preferencePoints);
   });
 
@@ -58,38 +58,38 @@ describe("scorePlan", () => {
 
     const score = scorePlan(plan, guests, constraints, layout);
 
-    expect(score.preferred[0]).toMatchObject({ adjacent: false, proximity: "none", points: -16 });
+    expect(score.preferred[0]).toMatchObject({ adjacent: false, proximity: "none", points: -48 });
   });
 
-  it("penalizes high preferred pairs for non-adjacent placement", () => {
+  it("maps legacy high strength to next-to with high priority", () => {
     const constraints: ConstraintPair[] = [
       { id: "pair-1", type: "prefer_adjacent", guestAId: "a", guestBId: "b", strength: "high" }
     ];
 
     expect(scorePlan(planWith({ [t1.top(0)]: "a", [t1.top(1)]: "b" }), guests, constraints, layout).preferred[0]).toMatchObject({
-      adjacent: true, proximity: "left_right", points: 80
+      adjacent: true, proximity: "left_right", points: 96
     });
     expect(scorePlan(planWith({ [t1.top(0)]: "a", [t1.bot(0)]: "b" }), guests, constraints, layout).preferred[0]).toMatchObject({
-      adjacent: false, proximity: "opposite", points: -20
+      adjacent: false, proximity: "opposite", points: -96
     });
     expect(scorePlan(planWith({ [t1.top(0)]: "a", [t1.bot(1)]: "b" }), guests, constraints, layout).preferred[0]).toMatchObject({
-      adjacent: false, proximity: "diagonal", points: -40
+      adjacent: false, proximity: "diagonal", points: -96
     });
     expect(scorePlan(planWith({ [t1.top(0)]: "a", [t1.top(7)]: "b" }), guests, constraints, layout).preferred[0]).toMatchObject({
-      adjacent: false, proximity: "none", points: -80
+      adjacent: false, proximity: "none", points: -96
     });
   });
 
-  it("penalizes low preferred pairs only when fully separated (none)", () => {
+  it("maps legacy low strength to normal-priority chat", () => {
     const constraints: ConstraintPair[] = [
       { id: "pair-1", type: "prefer_adjacent", guestAId: "a", guestBId: "b", strength: "low" }
     ];
 
     expect(scorePlan(planWith({ [t1.top(0)]: "a", [t1.bot(1)]: "b" }), guests, constraints, layout).preferred[0]).toMatchObject({
-      adjacent: true, proximity: "diagonal", points: 12
+      adjacent: true, proximity: "diagonal", points: 24
     });
     expect(scorePlan(planWith({ [t1.top(0)]: "a", [t1.top(7)]: "b" }), guests, constraints, layout).preferred[0]).toMatchObject({
-      adjacent: false, proximity: "none", points: -12
+      adjacent: false, proximity: "none", points: -48
     });
   });
 
@@ -101,7 +101,7 @@ describe("scorePlan", () => {
 
     const score = scorePlan(plan, guests, constraints, layout);
 
-    expect(score.avoided[0]).toMatchObject({ adjacent: true, proximity: "diagonal", points: -50 });
+    expect(score.avoided[0]).toMatchObject({ adjacent: true, proximity: "diagonal", points: -19 });
   });
 
   it("rewards guests who prefer a head seat when they are at one", () => {
@@ -174,4 +174,98 @@ it("can turn off group mixing without changing explicit preference scores", () =
   expect(disabled.groupPoints).toBe(0);
   expect(disabled.constraintPoints).toBe(enabled.constraintPoints);
   expect(disabled.total).toBe(disabled.constraintPoints);
+});
+
+// Exercise the same policy used by scoring, guided swaps, and capacity analysis.
+describe("intent-based seating preferences", () => {
+  const mixed = buildSeatingLayout({ tables: [
+    { id: 1, kind: "circular", seats: 10 },
+    { id: 2, kind: "rect", seatsPerSide: 6, leftEnd: true, rightEnd: true }
+  ] });
+  const circular = (pos: number) => mixed.seats.find(seat => seat.tableId === 1 && seat.position === pos)!.id;
+  const rect = (side: string, pos: number) => mixed.seats.find(seat => seat.tableId === 2 && seat.side === side && seat.position === pos)!.id;
+  function result(preference: ConstraintPair["preference"], a: number, b: number | undefined, priority: ConstraintPair["priority"] = "normal") {
+    const plan: Plan = { id: "intent", assignments: { [a]: "a", ...(b === undefined ? {} : { [b]: "b" }) }, holdingGuestIds: b === undefined ? ["b"] : [] };
+    return scorePlan(plan, guests, [{ id: "pair", type: "prefer_adjacent", guestAId: "a", guestBId: "b", preference, priority }], mixed).preferred[0];
+  }
+  it("accepts neighbours and next-but-one on circles, including wraparound, but excludes next-but-two and opposite", () => {
+    for (const pos of [1, 2, 8, 9]) expect(result("chat", circular(0), circular(pos)).adjacent).toBe(true);
+    for (const pos of [3, 4, 5, 6, 7]) expect(result("chat", circular(0), circular(pos)).adjacent).toBe(false);
+    expect(result("chat", circular(0), circular(1)).points).toBeGreaterThan(result("chat", circular(0), circular(2)).points);
+  });
+  it("accepts rectangular diagonals and opposite, but not distant seats along a side", () => {
+    for (const destination of [rect("top", 1), rect("bottom", 0), rect("bottom", 1)]) {
+      expect(result("chat", rect("top", 0), destination).adjacent).toBe(true);
+    }
+    expect(result("chat", rect("top", 0), rect("top", 2)).adjacent).toBe(false);
+  });
+  it("requires immediate neighbours for next-to, including end seats", () => {
+    expect(result("next_to", circular(0), circular(9)).adjacent).toBe(true);
+    expect(result("next_to", circular(0), circular(2)).adjacent).toBe(false);
+    expect(result("next_to", rect("top", 0), rect("bottom", 0)).adjacent).toBe(false);
+    expect(result("next_to", rect("top", 0), rect("left-end", -1)).adjacent).toBe(true);
+  });
+  it("gives equal credit anywhere at the same table and rejects other tables or unseated guests", () => {
+    expect(result("same_table", circular(0), circular(1)).points).toBe(result("same_table", circular(0), circular(5)).points);
+    expect(result("same_table", rect("top", 0), rect("top", 5)).adjacent).toBe(true);
+    expect(result("same_table", circular(0), rect("top", 0)).adjacent).toBe(false);
+    expect(result("same_table", circular(0), undefined).adjacent).toBe(false);
+  });
+  it("uses priority only as a weight, for both met and unmet preferences", () => {
+    for (const preference of ["next_to", "chat", "same_table"] as const) {
+      for (const destination of [circular(1), rect("top", 0)]) {
+        const normal = result(preference, circular(0), destination);
+        const high = result(preference, circular(0), destination, "high");
+        expect(high.adjacent).toBe(normal.adjacent);
+        expect(high.points).toBe(normal.points * 2);
+      }
+    }
+  });
+  it("keeps a residual keep-apart penalty for share-table pairs, even at distant seats", () => {
+    const constraints: ConstraintPair[] = [
+      { id: "together", type: "prefer_adjacent", guestAId: "a", guestBId: "b", preference: "same_table" },
+      { id: "apart", type: "avoid_adjacent", guestAId: "a", guestBId: "b" }
+    ];
+    const score = scorePlan({ id: "both", assignments: { [rect("top", 0)]: "a", [rect("top", 5)]: "b" }, holdingGuestIds: [] }, guests, constraints, mixed);
+    expect(score.preferred[0].adjacent).toBe(true);
+    expect(score.avoided[0].adjacent).toBe(true);
+    expect(score.avoided[0].points).toBeGreaterThan(-50);
+    expect(score.avoided[0].points).toBeLessThan(0);
+  });
+});
+
+describe("keep-apart distance scoring", () => {
+  const apart: ConstraintPair = { id: "apart", type: "avoid_adjacent", guestAId: "a", guestBId: "b" };
+  function score(at: SeatingLayout, a: number, b?: number) {
+    return scorePlan({ id: "apart", assignments: { [a]: "a", ...(b ? { [b]: "b" } : {}) }, holdingGuestIds: b ? [] : ["b"] }, guests, [apart], at).avoided[0];
+  }
+  it("always prefers different tables to even the furthest seats at one table", () => {
+    expect(score(layout, t1.top(0), t1.leftEnd)).toMatchObject({ adjacent: false, points: 24 });
+    expect(score(layout, t1.top(0), t1.leftEnd).points).toBeGreaterThan(score(layout, t1.top(0), t1.rightEnd).points);
+  });
+  it.each([3, 10, 20])("applies the same shared-table penalty at every distance on a %i-seat circular table", seats => {
+    const round = buildSeatingLayout({ tables: [{ id: 1, kind: "circular", seats }] });
+    for (const destination of round.seatIds.slice(1)) {
+      expect(score(round, 1, destination)).toMatchObject({ adjacent: true, points: -50 });
+    }
+  });
+  it("quickly reduces the long-table penalty after several seat spacings, regardless of table length", () => {
+    const short = buildSeatingLayout({ tables: [{ id: 1, kind: "rect", seatsPerSide: 6, leftEnd: false, rightEnd: false }] });
+    const long = buildSeatingLayout({ tables: [{ id: 1, kind: "rect", seatsPerSide: 20, leftEnd: false, rightEnd: false }] });
+    expect(score(short, 1, 2).points).toBe(-50);
+    expect(score(short, 1, 4).points).toBeGreaterThan(-15);
+    expect(score(short, 1, 5).points).toBeGreaterThan(-10);
+    expect(score(short, 1, 5).points).toBe(score(long, 1, 5).points);
+    expect(score(long, 1, 20).points).toBe(-4);
+  });
+  it("improves with distance along and across a long table, including end seats", () => {
+    expect(score(layout, t1.top(0), t1.top(1)).points).toBe(-50);
+    expect(score(layout, t1.top(0), t1.top(7)).points).toBeGreaterThan(score(layout, t1.top(0), t1.top(2)).points);
+    expect(score(layout, t1.top(0), t1.bot(7)).points).toBeGreaterThan(score(layout, t1.top(0), t1.bot(0)).points);
+    expect(score(layout, t1.rightEnd, t1.top(8)).points).toBe(-50);
+    expect(score(layout, t1.rightEnd, t1.top(0)).points).toBeGreaterThan(-50);
+  });
+  it("does not award separate-table points to an unseated pair", () => {
+    expect(score(layout, t1.top(0))).toMatchObject({ adjacent: true, points: 0 });
+  });
 });

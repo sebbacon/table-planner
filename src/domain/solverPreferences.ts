@@ -1,10 +1,9 @@
+import { getPairPriority } from "./pairPreferences";
 import { isHeadSeat } from "./seating";
-import type { ConstraintPair, PairStrength, SeatAssignments, SeatingLayout } from "./types";
-
-const TABLE_PULL_WEIGHTS: Record<PairStrength, number> = { high: 3, medium: 2, low: 1 };
+import type { ConstraintPair, SeatAssignments, SeatingLayout } from "./types";
 
 export function getTablePullWeight(pair: ConstraintPair): number {
-  return TABLE_PULL_WEIGHTS[pair.strength ?? "medium"] ?? 2;
+  return getPairPriority(pair) === "high" ? 4 : 2;
 }
 
 function getPartnerId(pair: ConstraintPair, guestId: string): string | null {

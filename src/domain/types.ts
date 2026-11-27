@@ -1,4 +1,6 @@
 export type PairConstraintType = "prefer_adjacent" | "avoid_adjacent";
+export type PairPreference = "next_to" | "chat" | "same_table";
+export type PairPriority = "normal" | "high";
 export type PairStrength = "high" | "medium" | "low";
 export type HeadSeatConstraintType = "prefer_head" | "avoid_head";
 export type ConstraintType = PairConstraintType | HeadSeatConstraintType;
@@ -14,7 +16,10 @@ export interface ConstraintPair {
   type: PairConstraintType;
   guestAId: string;
   guestBId: string;
-  strength?: PairStrength; // only meaningful for prefer_adjacent; absent/undefined = "medium"
+  preference?: PairPreference;
+  priority?: PairPriority;
+  /** Legacy backup field; use preference and priority for new pairs. */
+  strength?: PairStrength;
 }
 
 export interface HeadSeatConstraint {
@@ -81,6 +86,7 @@ export interface Plan {
 
 export interface PairScoreResult {
   pair: ConstraintPair;
+  /** Legacy name: preferred intent met, or keep-apart ideal still unmet. */
   adjacent: boolean;
   proximity: SeatProximity;
   points: number;

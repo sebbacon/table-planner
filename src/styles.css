@@ -1913,3 +1913,16 @@ input[type="checkbox"] {
 .venue-table-shape { display: inline-block; flex: 0 0 auto; width: 44px; height: 24px; border: 2px solid #647d70; border-radius: 4px; background: #e2ede5; }
 .venue-table-shape.circular { width: 30px; height: 30px; border-radius: 50%; margin-inline: 7px; }
 .venue-table-shape-label { display: flex; align-items: center; gap: .5rem; font-size: .875rem; }
+
+.priority-control { grid-column: 1 / -1; grid-row: 3; display: flex; align-items: center; gap: .6rem; font-size: .8rem; color: #53636e; }
+.preference-diagrams { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 1rem; }
+.preference-diagrams svg { width: min(240px, 100%); height: auto; }
+.distance-help > label { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+@media (max-width: 600px) {
+  .pair-row.has-strength .priority-control { grid-row: 4; }
+}
+.setup-workspace { grid-template-columns: minmax(0, 1fr); }
+.pair-row select { min-width: 0; }
+@media (max-width: 600px) {
+  .pair-row.has-strength .distance-control { flex-direction: column; align-items: stretch; gap: .3rem; }
+}
