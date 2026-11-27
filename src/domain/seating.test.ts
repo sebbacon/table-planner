@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { areSeatsAdjacent, buildSeatingLayout, getSeatProximity, isHeadSeat } from "./seating";
+import { areSeatsAdjacent, buildSeatingLayout, getSeatProximity, getSeatDistance, isHeadSeat } from "./seating";
 import { DEFAULT_VENUE_CONFIG } from "./venueConfig";
 import type { SeatingLayout } from "./types";
 
@@ -91,4 +91,18 @@ describe("seating graph", () => {
     const [s0, , , s3] = circLayout.seats;
     expect(getSeatProximity(s0.id, s3.id, circLayout)).toBe("none");
   });
+});
+
+it("measures within-table separation symmetrically, including wraparound and both end seats", () => {
+  const mixed = buildSeatingLayout({ tables: [
+    { id: 1, kind: "circular", seats: 9 },
+    { id: 2, kind: "rect", seatsPerSide: 5, leftEnd: true, rightEnd: true }
+  ] });
+  expect(getSeatDistance(1, 2, mixed)).toBe(getSeatDistance(1, 9, mixed));
+  expect(getSeatDistance(1, 5, mixed)).toBe(4);
+  expect(getSeatDistance(1, 5, mixed)).toBe(getSeatDistance(5, 1, mixed));
+  const ends = mixed.seats.filter(seat => seat.side.endsWith("-end"));
+  expect(getSeatDistance(ends[0].id, ends[1].id, mixed)).toBe(6);
+  expect(getSeatDistance(1, ends[0].id, mixed)).toBe(0);
+  expect(getSeatDistance(-1, 1, mixed)).toBe(0);
 });

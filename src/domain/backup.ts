@@ -92,7 +92,7 @@ function parseConstraint(value: unknown): Constraint {
   }
 
   if (type === "prefer_adjacent" || type === "avoid_adjacent") {
-    const { guestAId, guestBId, strength } = value;
+    const { guestAId, guestBId, strength, preference, priority } = value;
 
     if (typeof guestAId !== "string" || typeof guestBId !== "string") {
       throw new Error("The data file contains an invalid constraint.");
@@ -109,7 +109,9 @@ function parseConstraint(value: unknown): Constraint {
       type,
       guestAId,
       guestBId,
-      ...(parsedStrength !== undefined ? { strength: parsedStrength } : {})
+      ...(parsedStrength !== undefined ? { strength: parsedStrength } : {}),
+      ...(type === "prefer_adjacent" && (preference === "next_to" || preference === "chat" || preference === "same_table") ? { preference } : {}),
+      ...(type === "prefer_adjacent" && (priority === "normal" || priority === "high") ? { priority } : {})
     };
   }
 

@@ -1,4 +1,5 @@
-import { getSeatProximity, isHeadSeat } from "./seating";
+import { getPairPreference, getPairPriority } from "./pairPreferences";
+import { getSeatProximity, getSeatDistance, isHeadSeat } from "./seating";
 import type {
   Constraint,
   ConstraintPair,
@@ -6,28 +7,31 @@ import type {
   HeadSeatConstraint,
   HeadSeatScoreResult,
   PairScoreResult,
-  PairStrength,
   Plan,
   ScoreBreakdown,
   SeatingLayout,
-  SeatAssignments,
-  SeatProximity
+  SeatAssignments
 } from "./types";
 import { isHeadSeatConstraint, isPairConstraint } from "./types";
 
-const PREFER_PROXIMITY_POINTS: Record<PairStrength, Record<SeatProximity, number>> = {
-  high:   { left_right: 80, end: 80, opposite: -20, diagonal: -40, none: -80 },
-  medium: { left_right: 48, end: 48, opposite: 32,  diagonal:   8, none: -16 },
-  low:    { left_right: 24, end: 24, opposite: 18,  diagonal:  12, none: -12 },
-};
-
-function isAdjacentForStrength(proximity: SeatProximity, strength: PairStrength): boolean {
-  if (strength === "high") return proximity === "left_right" || proximity === "end";
-  if (strength === "medium") return proximity !== "none" && proximity !== "diagonal";
-  return proximity !== "none"; // low: diagonal counts as satisfied
+// Satisfaction depends on intent and table shape. Priority only scales points.
+export function scoreSeatPreference(pair: ConstraintPair, seatAId: number | undefined, seatBId: number | undefined, layout: SeatingLayout) {
+  const a = seatAId === undefined ? undefined : layout.seatsById.get(seatAId);
+  const b = seatBId === undefined ? undefined : layout.seatsById.get(seatBId);
+  const sameTable = Boolean(a && b && a.id !== b.id && a.tableId === b.tableId);
+  const proximity = a && b ? getSeatProximity(a.id, b.id, layout) : "none";
+  const intent = getPairPreference(pair);
+  const neighbour = proximity === "left_right" || proximity === "end";
+  const circular = a?.side === "circular";
+  const chatting = neighbour || proximity === "diagonal" || (!circular && proximity === "opposite");
+  const satisfied = sameTable && (intent === "same_table" || (intent === "next_to" ? neighbour : chatting));
+  const nearbyPoints = neighbour ? 48 : proximity === "opposite" ? 32 : 24;
+  const basePoints = satisfied ? (intent === "same_table" ? 48 : nearbyPoints) : -48;
+  return { adjacent: satisfied, proximity, points: basePoints * (getPairPriority(pair) === "high" ? 2 : 1) };
 }
-const AVOID_ADJACENT_PENALTY = -50;
-const AVOID_CLEAR_POINTS = 4;
+const AVOID_NEIGHBOUR_PENALTY = -50;
+const AVOID_DISTANT_PENALTY = -4;
+const AVOID_SEPARATE_TABLE_POINTS = 24;
 const PREFER_HEAD_POINTS = 36;
 const AVOID_HEAD_PENALTY = -36;
 const AVOID_HEAD_CLEAR_POINTS = 4;
@@ -107,14 +111,9 @@ function scorePreferencePair(
   guestSeatIds: Map<string, number>,
   layout: SeatingLayout
 ): PairScoreResult {
-  const proximity = getGuestSeatProximity(pair, guestSeatIds, layout);
-  const strength: PairStrength = pair.strength ?? "medium";
-
   return {
     pair,
-    adjacent: isAdjacentForStrength(proximity, strength),
-    proximity,
-    points: PREFER_PROXIMITY_POINTS[strength][proximity]
+    ...scoreSeatPreference(pair, guestSeatIds.get(pair.guestAId), guestSeatIds.get(pair.guestBId), layout)
   };
 }
 
@@ -123,28 +122,24 @@ function scoreAvoidPair(
   guestSeatIds: Map<string, number>,
   layout: SeatingLayout
 ): PairScoreResult {
-  const proximity = getGuestSeatProximity(pair, guestSeatIds, layout);
-  const adjacent = proximity !== "none";
-
-  return {
-    pair,
-    adjacent,
-    proximity,
-    points: adjacent ? AVOID_ADJACENT_PENALTY : AVOID_CLEAR_POINTS
-  };
-}
-
-function getGuestSeatProximity(
-  pair: ConstraintPair,
-  guestSeatIds: Map<string, number>,
-  layout: SeatingLayout
-): SeatProximity {
   const seatAId = guestSeatIds.get(pair.guestAId);
   const seatBId = guestSeatIds.get(pair.guestBId);
-
-  if (seatAId === undefined || seatBId === undefined) return "none";
-
-  return getSeatProximity(seatAId, seatBId, layout);
+  const a = seatAId === undefined ? undefined : layout.seatsById.get(seatAId);
+  const b = seatBId === undefined ? undefined : layout.seatsById.get(seatBId);
+  const proximity = a && b ? getSeatProximity(a.id, b.id, layout) : "none";
+  if (!a || !b) return { pair, adjacent: true, proximity, points: 0 };
+  const sameTable = a.tableId === b.tableId;
+  const neighbour = proximity === "left_right" || proximity === "end";
+  const distance = neighbour ? 1 : getSeatDistance(a.id, b.id, layout);
+  // Circular tables keep a constant shared-table penalty. At long tables,
+  // each extra seat-spacing leaves only 40% of the remaining close-seat cost.
+  // Use absolute distance so four seats apart means the same on any length.
+  const remainingPenalty = a.side === "circular" ? 1 : 0.4 ** Math.max(0, distance - 1);
+  const points = sameTable
+    ? Math.round(AVOID_DISTANT_PENALTY + (AVOID_NEIGHBOUR_PENALTY - AVOID_DISTANT_PENALTY) * remainingPenalty)
+    : AVOID_SEPARATE_TABLE_POINTS;
+  // For avoided pairs, "adjacent" now flags the unmet ideal of separate tables.
+  return { pair, adjacent: sameTable, proximity, points };
 }
 
 function scoreHeadSeatConstraint(

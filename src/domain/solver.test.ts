@@ -123,3 +123,24 @@ it("honours the group-mixing setting during search and candidate scoring", () =>
   expect(generatePlans({ ...options, mixGroups: false }).every((candidate) => candidate.score.groupPoints === 0)).toBe(true);
   expect(generatePlans({ ...options, mixGroups: true }).every((candidate) => candidate.score.groupPoints < 0)).toBe(true);
 });
+
+it.each(["next_to", "chat", "same_table"] as const)("can improve a high-priority %s pair across initial table assignments", (preference) => {
+  const layout = buildSeatingLayout({ tables: [{ id: 1, kind: "circular", seats: 6 }, { id: 2, kind: "rect", seatsPerSide: 3, leftEnd: false, rightEnd: false }] });
+  const guests = ["a", "b"].map(id => ({ id, name: id, groups: [] }));
+  const [best] = generatePlans({ guests, constraints: [{ id: "pair", type: "prefer_adjacent", guestAId: "a", guestBId: "b", preference, priority: "high" }], layout, attempts: 5, improveIterations: 100, rng: seededRandom(17) });
+  expect(best.score.preferred[0].adjacent).toBe(true);
+});
+
+it.each([1, 17, 99])("separates a keep-apart pair onto different tables where available (seed %i)", seed => {
+  const layout = buildSeatingLayout({ tables: [1, 2].map(id => ({ id, kind: "circular", seats: 6 })) });
+  const guests = Array.from({ length: 8 }, (_, i) => ({ id: `g${i}`, name: `Guest ${i}`, groups: [] }));
+  const [best] = generatePlans({ guests, constraints: [{ id: "apart", type: "avoid_adjacent", guestAId: "g0", guestBId: "g1" }], layout, attempts: 6, improveIterations: 100, rng: seededRandom(seed) });
+  expect(best.score.avoided[0]).toMatchObject({ adjacent: false, points: 24 });
+});
+
+it("retains the shared-table penalty when only one circular table is available", () => {
+  const layout = buildSeatingLayout({ tables: [{ id: 1, kind: "circular", seats: 10 }] });
+  const guests = Array.from({ length: 10 }, (_, i) => ({ id: `g${i}`, name: `Guest ${i}`, groups: [] }));
+  const [best] = generatePlans({ guests, constraints: [{ id: "apart", type: "avoid_adjacent", guestAId: "g0", guestBId: "g1" }], layout, attempts: 6, improveIterations: 100, rng: seededRandom(17) });
+  expect(best.score.avoided[0]).toMatchObject({ adjacent: true, points: -50 });
+});
