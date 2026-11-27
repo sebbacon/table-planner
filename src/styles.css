@@ -1883,3 +1883,33 @@ input[type="checkbox"] {
 .venue-setup-add p { margin: 1rem 0 0; font-size: .875rem; color: #666; }
 .venue-setup-table-header { flex-wrap: wrap; }
 .venue-setup-label-input { min-width: 8rem; width: 0; }
+
+.room-layout-scroll { overflow: auto; border: 1px solid #d5d9d6; border-radius: 12px; max-width: 100%; }
+.room-layout { position: relative; background-color: #f7f8f5; background-image: radial-gradient(#d5d9d6 1px, transparent 1px); background-size: 20px 20px; }
+.room-table { position: absolute; width: 180px; height: 110px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; border: 2px solid #647d70; border-radius: 12px; background: #e2ede5; color: #243c30; cursor: grab; touch-action: none; user-select: none; padding: 12px; white-space: normal; }
+.room-table.circular { width: 110px; border-radius: 50%; }
+.room-table:active { cursor: grabbing; z-index: 1; }
+.room-table span { font-size: 12px; font-weight: normal; }
+.room-table strong { max-width: 100%; overflow-wrap: anywhere; }
+.room-table:focus-visible { outline: 3px solid #305eaa; outline-offset: 3px; z-index: 2; }
+
+.room-view-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; font-size: .85rem; }
+.room-view-controls label { display: flex; align-items: center; gap: .5rem; }
+.room-plan-viewport { max-height: 70vh; overflow: auto; cursor: grab; }
+.room-plan-canvas { position: relative; }
+.room-plan-canvas .table-block + .table-block { margin-top: 0; }
+.room-plan-canvas .table-block { min-width: 0; cursor: default; }
+@media print {
+  .room-view-controls { display: none; }
+  .room-plan-viewport { max-height: none; overflow: visible; }
+  .room-plan-canvas { zoom: var(--print-zoom) !important; break-inside: avoid; }
+}
+
+.room-plan-viewport { padding: .5rem; }
+@media print {
+  .room-plan-viewport { padding: 0; }
+}
+
+.venue-table-shape { display: inline-block; flex: 0 0 auto; width: 44px; height: 24px; border: 2px solid #647d70; border-radius: 4px; background: #e2ede5; }
+.venue-table-shape.circular { width: 30px; height: 30px; border-radius: 50%; margin-inline: 7px; }
+.venue-table-shape-label { display: flex; align-items: center; gap: .5rem; font-size: .875rem; }

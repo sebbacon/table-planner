@@ -1,3 +1,6 @@
+import { roomPlanGeometry } from "./domain/roomPlan";
+import { PlanViewport } from "./PlanViewport";
+import { RoomLayout } from "./RoomLayout";
 import { AlertTriangle, Bookmark, ChevronDown, FileDown, FileUp, GripVertical, Loader, Pencil, Plus, Printer, RefreshCw, Shuffle, Trash2, Upload, Users } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { createPlannerBackup, parsePlannerBackupJson, type PlannerData } from "./domain/backup";
@@ -8,7 +11,7 @@ import { createInitialPlan, scorePlan } from "./domain/scoring";
 import { DEFAULT_EFFORT, EFFORT_LEVELS, generatePlans, type ScoredPlan } from "./domain/solver";
 import { spreadsheetFileToGuestText } from "./domain/spreadsheet";
 import { isHeadSeatConstraint, isPairConstraint, type Constraint, type HeadSeatConstraint, type PairConstraintType, type PairStrength, type ConstraintPair, type Guest, type Plan, type SavedLayout, type ScoreBreakdown, type SeatingLayout, type TableConfig, type VenueConfig } from "./domain/types";
-import { DEFAULT_VENUE_CONFIG } from "./domain/venueConfig";
+import { DEFAULT_VENUE_CONFIG, roomTableOrder } from "./domain/venueConfig";
 import { parseGuestText, reconcileGuestText } from "./domain/parser";
 const STORAGE_KEY = "table-planner-state-v2";
 const PLACEHOLDER_GUESTS = Array.from({
@@ -38,6 +41,7 @@ export function App() {
   const [savedLayouts, setSavedLayouts] = useState<SavedLayout[]>([]);
   const [venueConfig, setVenueConfig] = useState<VenueConfig>(DEFAULT_VENUE_CONFIG);
   const [mixGroups, setMixGroups] = useState(false);
+  const [roomView, setRoomView] = useState(false);
   const [phase, setPhase] = useState<"setup" | "planning" | "saved">("setup");
   const [editingTables, setEditingTables] = useState(false);
   const [ready, setReady] = useState(false);
@@ -440,13 +444,10 @@ export function App() {
         </div>
         {editingTables ? <VenueSetup config={venueConfig} onConfirm={confirmTables} /> : <>
           <p>{venueConfig.tables.length} tables · {layout.seatIds.length} seats. Use these tables or change them to match your venue.</p>
-          <div className="table-previews">
-            {venueConfig.tables.map(table => <div className="table-preview" key={table.id}>
-              <span className={`mini-table ${table.kind}`} aria-hidden="true" />
-              <strong>{table.label || `Table ${table.id}`}</strong>
-              <span>{table.kind === "rect" ? `${table.seatsPerSide * 2 + Number(table.leftEnd) + Number(table.rightEnd)} seats · long table` : `${table.seats} seats · round table`}</span>
-            </div>)}
-          </div>
+          <RoomLayout config={venueConfig} disabled={guestDraftChanged} onChange={positions => {
+            remember();
+            setVenueConfig({ ...venueConfig, positions });
+          }} />
         </>}
       </section>
       <section className="panel-section setup-step">
@@ -539,9 +540,10 @@ export function App() {
             <div className="surface-toolbar">
               <h2>Seating layout</h2>
               <span className="muted-text">Drag guests to move or swap seats</span>
+              <button type="button" aria-pressed={roomView} onClick={() => setRoomView(value => !value)}>{roomView ? "Show as vertical list" : "Show as room layout"}</button>
             </div>
             <div className="print-area">
-              <TablePlan plan={activePlan} layout={layout} guestsById={guestsById} highlightedGuestId={highlightedGuestId ?? selectedGuestId} onDragStart={setDraggedGuestId} onSelectGuest={setSelectedGuestId} onDropIntoSeat={seatId => {
+              <TablePlan venueConfig={venueConfig} roomView={roomView} plan={activePlan} layout={layout} guestsById={guestsById} highlightedGuestId={highlightedGuestId ?? selectedGuestId} onDragStart={setDraggedGuestId} onSelectGuest={setSelectedGuestId} onDropIntoSeat={seatId => {
                 if (draggedGuestId) moveGuest(draggedGuestId, seatId);
                 setDraggedGuestId(null);
               }} />
@@ -936,6 +938,8 @@ function HeadSeatEditor({
   </section>;
 }
 interface TablePlanProps {
+  venueConfig: VenueConfig;
+  roomView: boolean;
   plan: Plan;
   layout: SeatingLayout;
   guestsById: Map<string, Guest>;
@@ -945,6 +949,8 @@ interface TablePlanProps {
   onDropIntoSeat: (seatId: number) => void;
 }
 function TablePlan({
+  venueConfig,
+  roomView,
   plan,
   layout,
   guestsById,
@@ -953,13 +959,17 @@ function TablePlan({
   onSelectGuest,
   onDropIntoSeat
 }: TablePlanProps) {
-  return <div className="table-plan" aria-label="Seating layout">
-    {layout.tableIds.map(tableId => {
+  const { tables, width, height } = roomPlanGeometry(venueConfig);
+  const placement = (id: number) => roomView ? {
+    position: "absolute" as const, ...tables[id]
+  } : undefined;
+  return <PlanViewport roomView={roomView} width={width} height={height}>
+    {roomTableOrder(venueConfig).map(tableId => {
       const config = layout.tableConfigs.get(tableId)!;
       const tableSeats = layout.seats.filter(s => s.tableId === tableId);
       const label = config.label ?? `Table ${tableId}`;
       if (config.kind === "circular") {
-        return <div className="table-block circular-block" key={tableId}>
+        return <div className="table-block circular-block" style={placement(tableId)} key={tableId}>
           <div className="table-label">{label}</div>
           <CircularTableBlock seats={tableSeats} totalSeats={config.seats} plan={plan} guestsById={guestsById} highlightedGuestId={highlightedGuestId} onDragStart={onDragStart} onSelectGuest={onSelectGuest} onDropIntoSeat={onDropIntoSeat} />
         </div>;
@@ -970,7 +980,7 @@ function TablePlan({
       const sideColStart = hasLeft ? 2 : 1;
       const gridTemplateColumns = [hasLeft ? "4.5rem" : "", `repeat(${seatsPerSide}, minmax(4.35rem, 1fr))`, hasRight ? "4.5rem" : ""].filter(Boolean).join(" ");
       const rectColEnd = sideColStart + seatsPerSide;
-      return <div className="table-block" key={tableId}>
+      return <div className="table-block" style={placement(tableId)} key={tableId}>
         <div className="table-label">{label}</div>
         <div className="table-grid" style={{
           gridTemplateColumns
@@ -987,7 +997,7 @@ function TablePlan({
         </div>
       </div>;
     })}
-  </div>;
+  </PlanViewport>;
 }
 interface CircularTableBlockProps {
   seats: {
@@ -1402,6 +1412,18 @@ function VenueSetup({
   onConfirm
 }: VenueSetupProps) {
   const [tables, setTables] = useState<TableConfig[]>(config.tables);
+  const shapeDrafts = useRef(new Map<string, TableConfig>());
+  const tablesById = new Map(tables.map(table => [table.id, table]));
+  const orderedTables = roomTableOrder({ ...config, tables }).map(id => tablesById.get(id)!);
+  function changeShape(table: TableConfig, kind: TableConfig["kind"]) {
+    if (table.kind === kind) return;
+    shapeDrafts.current.set(`${table.id}:${table.kind}`, table);
+    const previous = shapeDrafts.current.get(`${table.id}:${kind}`);
+    const seats = table.kind === "circular" ? table.seats : table.seatsPerSide * 2 + Number(table.leftEnd) + Number(table.rightEnd);
+    updateTable(previous ? { ...previous, label: table.label } : kind === "circular"
+      ? { id: table.id, label: table.label, kind, seats: Math.max(3, Math.min(30, seats)) }
+      : { id: table.id, label: table.label, kind, seatsPerSide: Math.floor(seats / 2), leftEnd: false, rightEnd: seats % 2 === 1 });
+  }
   const [quantity, setQuantity] = useState("1");
   const [shape, setShape] = useState<TableConfig["kind"]>("circular");
   const [roundSeats, setRoundSeats] = useState("8");
@@ -1419,6 +1441,8 @@ function VenueSetup({
     });
   }
   function removeTable(id: number) {
+    shapeDrafts.current.delete(`${id}:rect`);
+    shapeDrafts.current.delete(`${id}:circular`);
     setTables(tables.filter(t => t.id !== id));
   }
   function updateTable(updated: TableConfig) {
@@ -1458,13 +1482,19 @@ function VenueSetup({
       <p>Added tables appear below with new numbers. Existing tables stay as they are.</p>
     </form>
     <div className="venue-setup-tables">
-      {tables.map(table => <div className="venue-setup-table" key={table.id}>
+      {orderedTables.map(table => <div className="venue-setup-table" key={table.id}>
         <div className="venue-setup-table-header">
           <input aria-label={`Table ${table.id} name`} className="venue-setup-label-input" value={table.label ?? ""} onChange={e => updateTable({
             ...table,
             label: e.target.value
           })} placeholder="Table name" />
-          <span className="venue-setup-kind">{table.kind === "rect" ? "Long table" : "Circular"}</span>
+          <span className={`venue-table-shape ${table.kind}`} aria-hidden="true" />
+          <label className="venue-table-shape-label">Table shape
+            <select aria-label={`Table ${table.id} shape`} value={table.kind} onChange={event => changeShape(table, event.target.value as TableConfig["kind"])}>
+              <option value="rect">Long</option>
+              <option value="circular">Circular</option>
+            </select>
+          </label>
           <button type="button" onClick={() => appendTables(table, 1)} aria-label={`Duplicate table ${table.id}`}>Duplicate</button>
           <button type="button" onClick={() => removeTable(table.id)} aria-label="Remove table">
             <Trash2 size={14} />
@@ -1505,6 +1535,7 @@ function VenueSetup({
     </div>
     <div className="venue-setup-actions">
       <button type="button" className="primary-button" disabled={tables.length === 0} onClick={() => onConfirm({
+        ...config,
         tables
       })}>
         Use these tables

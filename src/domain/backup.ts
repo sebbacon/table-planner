@@ -194,7 +194,20 @@ function parseVenueConfig(value: unknown): VenueConfig | undefined {
       }
       throw new Error();
     });
-    return { tables };
+    const positions: Record<number, { x: number; y: number }> = {};
+    if (isRecord(value.positions)) {
+      for (const table of tables) {
+        const position = value.positions[table.id];
+        if (isRecord(position) && typeof position.x === "number" && Number.isFinite(position.x)
+          && typeof position.y === "number" && Number.isFinite(position.y)) {
+          positions[table.id] = {
+            x: Math.max(0, Math.min(table.kind === "circular" ? 790 : 720, position.x)),
+            y: Math.max(0, Math.min(490, position.y))
+          };
+        }
+      }
+    }
+    return { tables, ...(Object.keys(positions).length ? { positions } : {}) };
   } catch {
     return undefined;
   }
