@@ -1871,3 +1871,15 @@ input[type="checkbox"] {
 .rename-guest-form input { min-width: 0; font: inherit; border: 1px solid #c8ced3; border-radius: 5px; padding: .6rem; }
 .table-block.circular-block { min-width: 0; }
 .circular-table-svg { max-width: 100%; height: auto; }
+
+.venue-setup-add {
+  border: 1px solid #d0d5db;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.venue-setup-add h3 { margin: 0 0 1rem; }
+.venue-setup-add p { margin: 1rem 0 0; font-size: .875rem; color: #666; }
+.venue-setup-table-header { flex-wrap: wrap; }
+.venue-setup-label-input { min-width: 8rem; width: 0; }
