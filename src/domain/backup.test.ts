@@ -29,7 +29,7 @@ describe("planner backup", () => {
       ],
       activePlan: plan,
       savedLayouts: [{ id: "saved", name: "Dinner", savedAt: "2026-01-01T00:00:00.000Z", plan, scoreTotal: 123 }],
-      venueConfig: { tables: [
+      venueConfig: { positions: { 10: { x: 240, y: 180 }, 20: { x: 30, y: 40 } }, tables: [
         { kind: "rect", id: 10, label: "Top", seatsPerSide: 3, leftEnd: true, rightEnd: false },
         { kind: "circular", id: 20, label: "Family", seats: 5 }
       ] }

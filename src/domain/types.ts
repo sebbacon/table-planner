@@ -59,6 +59,7 @@ export interface CircularTableConfig {
 export type TableConfig = RectTableConfig | CircularTableConfig;
 
 export interface VenueConfig {
+  positions?: Record<number, { x: number; y: number }>;
   tables: TableConfig[];
 }
 

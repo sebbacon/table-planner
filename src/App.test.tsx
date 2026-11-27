@@ -38,6 +38,46 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("guided setup", () => {
+  it("orders the plan by room position and toggles the printable room arrangement", async () => {
+    const user = userEvent.setup();
+    seed({ ...initial, venueConfig: {
+      tables: [1, 2].map(id => ({ id, kind: "circular", seats: 5 })),
+      positions: { 1: { x: 300, y: 250 }, 2: { x: 20, y: 20 } }
+    } });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "2. Plan" }));
+    const surface = screen.getByLabelText("Seating layout");
+    expect([...surface.querySelectorAll(".table-label")].map(node => node.textContent)).toEqual(["Table 2", "Table 1"]);
+    const toggle = screen.getByRole("button", { name: "Show as room layout" });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    await user.click(toggle);
+    expect(toggle).toHaveTextContent("Show as vertical list");
+    expect(surface).toHaveClass("room-plan-viewport");
+    expect(surface.querySelector(".room-plan-canvas")).toBeInTheDocument();
+    expect(surface.querySelector(".table-block")).toHaveStyle({ left: "0px", top: "0px" });
+    expect(screen.getByLabelText("Zoom")).toBeInTheDocument();
+    await user.click(toggle);
+    expect(toggle).toHaveTextContent("Show as room layout");
+    expect(surface).not.toHaveClass("room-plan-viewport");
+    expect(screen.queryByLabelText("Zoom")).not.toBeInTheDocument();
+  });
+
+  it("saves room positions without clearing seating plans and restores them on reload", async () => {
+    const user = userEvent.setup();
+    seed();
+    const view = render(<App />);
+    await user.click(screen.getByRole("button", { name: "1. Setup" }));
+    const table = screen.getByRole("button", { name: "Move Table 1" });
+    table.focus();
+    await user.keyboard("{ArrowRight}{Shift>}{ArrowDown}{/Shift}");
+    await waitFor(() => expect(saved().venueConfig?.positions?.[1]).toEqual({ x: 40, y: 70 }));
+    expect(saved().activePlan).toEqual(initial.activePlan);
+    view.unmount();
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "1. Setup" }));
+    expect(screen.getByRole("button", { name: "Move Table 1" })).toHaveStyle({ left: "40px", top: "70px" });
+  });
+
   it("starts with clear actions, local reassurance, and optional preferences", async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -119,6 +159,31 @@ describe("guided setup", () => {
 });
 
 describe("stable guests and saved data", () => {
+  it("edits tables in room order with shape clues and reversible shape changes", async () => {
+    const user = userEvent.setup();
+    seed({ ...initial, activePlan: null, venueConfig: {
+      tables: [
+        { id: 1, label: "Long", kind: "rect", seatsPerSide: 4, leftEnd: true, rightEnd: false },
+        { id: 2, label: "Round", kind: "circular", seats: 7 }
+      ], positions: { 1: { x: 300, y: 300 }, 2: { x: 20, y: 20 } }
+    } });
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Change tables" }));
+    expect(screen.getAllByRole("textbox", { name: /Table .* name/ }).map(input => input.getAttribute("aria-label"))).toEqual(["Table 2 name", "Table 1 name"]);
+    const row = screen.getByLabelText("Table 1 name").closest(".venue-setup-table")!;
+    expect(row.querySelector(".venue-table-shape")).toHaveClass("rect");
+    await user.selectOptions(screen.getByLabelText("Table 1 shape"), "circular");
+    expect(row.querySelector(".venue-table-shape")).toHaveClass("circular");
+    expect(within(row as HTMLElement).getByLabelText("Seats")).toHaveValue(9);
+    await user.selectOptions(screen.getByLabelText("Table 1 shape"), "rect");
+    expect(within(row as HTMLElement).getByLabelText("Seats per side")).toHaveValue(4);
+    expect(within(row as HTMLElement).getByLabelText("Head seat (left end)")).toBeChecked();
+    await user.selectOptions(screen.getByLabelText("Table 2 shape"), "rect");
+    await user.click(screen.getByRole("button", { name: "Use these tables" }));
+    await waitFor(() => expect(saved().venueConfig?.tables[1]).toEqual({ id: 2, label: "Round", kind: "rect", seatsPerSide: 3, leftEnd: false, rightEnd: true }));
+    expect(saved().venueConfig?.positions?.[2]).toEqual({ x: 20, y: 20 });
+  });
+
   it.each([
     { action: "remove a seated guest", text: "Jane Smith\nAlex Brown", assignments: { 1: "guest-1-jane-smith", 2: null, 3: null }, holding: ["guest-2-alex-brown"] },
     { action: "insert at the start", text: "Robin Green\nJane Smith\nAlex Brown\nSam Jones", assignments: initial.activePlan!.assignments, holding: ["guest-2-alex-brown", "guest-1-robin-green"] },
