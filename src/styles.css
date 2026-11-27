@@ -1926,3 +1926,147 @@ input[type="checkbox"] {
 @media (max-width: 600px) {
   .pair-row.has-strength .distance-control { flex-direction: column; align-items: stretch; gap: .3rem; }
 }
+
+.preference-group > summary h2 {
+  display: inline;
+  font-size: 1rem;
+}
+
+.preference-group > summary > .muted-text {
+  margin-left: .75rem;
+  font-weight: 400;
+}
+
+.preference-group[open] > summary {
+  margin-bottom: 1rem;
+}
+
+.guest-column-rule {
+  border-top: 1px solid var(--border, #d5dfdc);
+  padding: 1rem 0;
+}
+
+.guest-column-rule h3 {
+  margin: 0 0 .4rem;
+}
+
+.guest-column-rule > label,
+.column-table-mapping > label,
+.spreadsheet-name-columns > label {
+  display: grid;
+  gap: .4rem;
+}
+
+.guest-column-rule select {
+  width: 100%;
+}
+
+.column-table-mappings,
+.column-table-mapping {
+  display: grid;
+  gap: .75rem;
+}
+
+.column-table-mapping {
+  background: #f5f8f6;
+  padding: .8rem;
+  border-radius: .5rem;
+}
+
+.column-table-mapping button {
+  justify-self: start;
+}
+
+.column-values,
+.column-table-mapping details {
+  overflow-wrap: anywhere;
+}
+
+.fixed-table-issues {
+  border-color: #ba783e;
+  background: #fff8ed;
+}
+
+.spreadsheet-preview {
+  width: min(56rem, calc(100vw - 2rem));
+  max-width: 56rem;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.spreadsheet-name-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.spreadsheet-preview fieldset {
+  border: 1px solid #d5dfdc;
+  border-radius: .5rem;
+  margin: 1rem 0;
+}
+
+.spreadsheet-preview-scroll {
+  overflow: auto;
+  margin-bottom: 1rem;
+}
+
+.spreadsheet-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  white-space: nowrap;
+}
+
+.spreadsheet-preview th,
+.spreadsheet-preview td {
+  text-align: left;
+  border-bottom: 1px solid #d5dfdc;
+  padding: .5rem .75rem;
+}
+
+.seat-heading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: .2rem;
+  min-height: 1.5rem;
+}
+
+.seat-pin-toggle {
+  padding: .15rem;
+  min-height: 1.5rem;
+  width: 1.5rem;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #64716d;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.seat-pin-toggle:hover,
+.seat-pin-toggle.is-pinned {
+  background: #e0f0e9;
+  border-color: #72a18f;
+  color: #075d48;
+}
+
+.seat-pin-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: .75rem;
+  padding: .5rem 0;
+}
+
+.circular-table-svg foreignObject {
+  overflow: visible;
+}
+
+@media print {
+  .seat-heading,
+  .seat-pins-panel {
+    display: none;
+  }
+}

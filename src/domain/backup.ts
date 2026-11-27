@@ -1,4 +1,4 @@
-import type { Constraint, ConstraintType, PairStrength, Plan, SeatAssignments, SavedLayout, VenueConfig } from "./types";
+import type { Constraint, ConstraintType, PairStrength, Plan, SeatAssignments, SavedLayout, VenueConfig, GuestColumn, ColumnMode, SeatPins } from "./types";
 
 export interface PlannerData {
   guestText: string;
@@ -8,10 +8,12 @@ export interface PlannerData {
   venueConfig?: VenueConfig;
   guestIds?: string[];
   mixGroups?: boolean;
+  columns?: GuestColumn[];
+  seatPins?: SeatPins;
 }
 
 export interface PlannerBackup extends PlannerData {
-  version: 1;
+  version: 2;
   exportedAt: string;
 }
 
@@ -27,7 +29,7 @@ export function createPlannerBackup(
   exportedAt = new Date().toISOString()
 ): PlannerBackup {
   return {
-    version: 1,
+    version: 2,
     exportedAt,
     guestText: data.guestText,
     constraints: data.constraints,
@@ -35,6 +37,8 @@ export function createPlannerBackup(
     savedLayouts: data.savedLayouts,
     venueConfig: data.venueConfig,
     ...(data.guestIds ? { guestIds: data.guestIds } : {}),
+    ...(data.seatPins ? { seatPins: data.seatPins } : {}),
+    ...(data.columns ? { columns: data.columns } : {}),
     ...(data.mixGroups !== undefined ? { mixGroups: data.mixGroups } : {})
   };
 }
@@ -48,7 +52,7 @@ export function parsePlannerBackupJson(input: string): PlannerData {
     throw new Error("The data file is not valid JSON.");
   }
 
-  if (!isRecord(parsed) || parsed.version !== 1) {
+  if (!isRecord(parsed) || (parsed.version !== 1 && parsed.version !== 2)) {
     throw new Error("The data file is not a supported table planner export.");
   }
 
@@ -72,6 +76,8 @@ export function parsePlannerBackupJson(input: string): PlannerData {
       && new Set(parsed.guestIds).size === parsed.guestIds.length
       && parsed.guestIds.length === parsed.guestText.split(/\r?\n/).filter((line) => line.trim()).length
       ? { guestIds: parsed.guestIds as string[] } : {}),
+    ...(parsed.seatPins !== undefined ? { seatPins: parseSeatPins(parsed.seatPins) } : {}),
+    ...(parsed.columns !== undefined ? { columns: parseGuestColumns(parsed.columns) } : {}),
     ...(typeof parsed.mixGroups === "boolean" ? { mixGroups: parsed.mixGroups } : {})
   };
 }
@@ -209,7 +215,7 @@ function parseVenueConfig(value: unknown): VenueConfig | undefined {
         }
       }
     }
-    return { tables, ...(Object.keys(positions).length ? { positions } : {}) };
+    return { tables, ...(typeof value.nextTableId === "number" && Number.isSafeInteger(value.nextTableId) ? { nextTableId: value.nextTableId } : {}), ...(Object.keys(positions).length ? { positions } : {}) };
   } catch {
     return undefined;
   }
@@ -217,4 +223,35 @@ function parseVenueConfig(value: unknown): VenueConfig | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function parseGuestColumns(value: unknown): GuestColumn[] {
+  if (!Array.isArray(value)) throw new Error("The data file contains invalid guest columns.");
+  const ids = new Set<string>();
+  const modes = new Set<ColumnMode>(["ignore", "spread", "cluster", "neighbours", "table"]);
+  return value.map(column => {
+    if (!isRecord(column) || typeof column.id !== "string" || !column.id || ids.has(column.id)
+      || typeof column.label !== "string" || !column.label.trim()
+      || !modes.has(column.mode as ColumnMode) || !isRecord(column.values) || !isRecord(column.tableMapping)) {
+      throw new Error("The data file contains invalid guest columns.");
+    }
+    ids.add(column.id);
+    const values = Object.fromEntries(Object.entries(column.values).map(([id, values]) => {
+      if (!Array.isArray(values) || !values.every(value => typeof value === "string")) throw new Error("The data file contains invalid guest column values.");
+      return [id, [...new Set(values.filter(value => value.trim()))]];
+    }));
+    const tableMapping = Object.fromEntries(Object.entries(column.tableMapping).map(([value, tableId]) => {
+      if (tableId !== null && (typeof tableId !== "number" || !Number.isSafeInteger(tableId))) throw new Error("The data file contains an invalid table mapping.");
+      return [value, tableId];
+    }));
+    return { id: column.id, label: column.label, mode: column.mode as ColumnMode, values, tableMapping,
+      ...(column.legacyGroups === true ? { legacyGroups: true } : {}) };
+  });
+}
+
+function parseSeatPins(value: unknown): SeatPins {
+  if (!isRecord(value) || Object.entries(value).some(([id, seatId]) => !id || typeof seatId !== "number" || !Number.isSafeInteger(seatId) || seatId < 1)) {
+    throw new Error("The data file contains invalid seat pins.");
+  }
+  return Object.fromEntries(Object.entries(value)) as SeatPins;
 }

@@ -1,9 +1,11 @@
+import { guestColumnValues } from "./guestColumns";
 import { getPairPreference, getPairPriority } from "./pairPreferences";
 import { getSeatProximity, getSeatDistance, isHeadSeat } from "./seating";
 import type {
   Constraint,
   ConstraintPair,
   Guest,
+  GuestColumn,
   HeadSeatConstraint,
   HeadSeatScoreResult,
   PairScoreResult,
@@ -60,7 +62,8 @@ export function scorePlan(
   guests: Guest[],
   constraints: Constraint[],
   layout: SeatingLayout,
-  mixGroups = true
+  mixGroups = true,
+  columns?: GuestColumn[]
 ): ScoreBreakdown {
   const guestsById = new Map(guests.map((guest) => [guest.id, guest]));
   const guestSeatIds = getGuestSeatIds(plan.assignments);
@@ -78,7 +81,10 @@ export function scorePlan(
   const avoidPoints = sumPoints(avoided);
   const headSeatPoints = headSeat.reduce((total, result) => total + result.points, 0);
   const constraintPoints = preferencePoints + avoidPoints + headSeatPoints;
-  const groupPoints = mixGroups ? adjacencyGroup.points : 0;
+  const columnResults = columns?.filter(column => column.mode !== "ignore" && column.mode !== "table")
+    .map(column => ({ columnId: column.id, label: column.label, mode: column.mode, points: scoreColumn(column, plan, guests, layout) })) ?? [];
+  const clusterPoints = columnResults.filter(result => result.mode === "cluster").reduce((sum, result) => sum + result.points, 0);
+  const groupPoints = columns ? columnResults.reduce((sum, result) => sum + result.points, 0) : mixGroups ? adjacencyGroup.points : 0;
 
   return {
     total: constraintPoints + groupPoints,
@@ -87,6 +93,8 @@ export function scorePlan(
     avoidPoints,
     headSeatPoints,
     groupPoints,
+    clusterPoints,
+    columnResults,
     preferred,
     avoided,
     headSeat,
@@ -207,4 +215,61 @@ function scoreAdjacentGroup(
 
 function sumPoints(results: PairScoreResult[]): number {
   return results.reduce((total, result) => total + result.points, 0);
+}
+
+// Each rule contributes at most one point in magnitude, giving columns within
+// a priority tier equal weight despite different category counts or filled cells.
+function scoreColumn(column: GuestColumn, plan: Plan, guests: Guest[], layout: SeatingLayout): number {
+  const values = (id: string | null | undefined) => id ? guestColumnValues(column, id) : [];
+  if (column.mode === "neighbours") {
+    let matches = 0;
+    let edges = 0;
+    for (const [a, neighbours] of layout.adjacentSeatIds) {
+      for (const b of neighbours) {
+        if (a >= b) continue;
+        // Keep the original nearby-seat geometry for migrated group labels.
+        // New column rules mean immediate neighbours, including table ends.
+        const proximity = getSeatProximity(a, b, layout);
+        if (!column.legacyGroups && proximity !== "left_right" && proximity !== "end") continue;
+        edges++;
+        const va = values(plan.assignments[a]);
+        const vb = new Set(values(plan.assignments[b]));
+        matches += va.filter(value => vb.has(value)).length;
+      }
+    }
+    const maxMemberships = Math.max(1, ...guests.map(guest => values(guest.id).length));
+    return -matches / Math.max(1, edges * maxMemberships);
+  }
+  const totals = new Map<string, number>();
+  const counts = new Map<number, Map<string, number>>(layout.tableIds.map(id => [id, new Map()]));
+  for (const guest of guests) for (const value of values(guest.id)) totals.set(value, (totals.get(value) ?? 0) + 1);
+  for (const seat of layout.seats) {
+    const table = counts.get(seat.tableId)!;
+    for (const value of values(plan.assignments[seat.id])) table.set(value, (table.get(value) ?? 0) + 1);
+  }
+  if (column.mode === "cluster") {
+    let together = 0;
+    let possible = 0;
+    for (const [value, count] of totals) {
+      possible += count * (count - 1) / 2;
+      for (const table of counts.values()) {
+        const n = table.get(value) ?? 0;
+        together += n * (n - 1) / 2;
+      }
+    }
+    return together / Math.max(1, possible);
+  }
+  let deviation = 0;
+  const memberships = [...totals.values()].reduce((sum, n) => sum + n, 0);
+  for (const [tableId, table] of counts) {
+    const share = layout.seats.filter(seat => seat.tableId === tableId).length / Math.max(1, layout.seatIds.length);
+    for (const [value, total] of totals) deviation += Math.abs((table.get(value) ?? 0) - total * share);
+  }
+  return -deviation / Math.max(1, 2 * memberships);
+}
+
+// A positive result means a is better. Compare tiers in order; no number
+// of lower-tier improvements can outweigh an improvement in a higher tier.
+export function comparePreferenceScores(a: Pick<ScoreBreakdown, "constraintPoints" | "clusterPoints" | "groupPoints">, b: Pick<ScoreBreakdown, "constraintPoints" | "clusterPoints" | "groupPoints">): number {
+  return a.constraintPoints - b.constraintPoints || a.clusterPoints - b.clusterPoints || a.groupPoints - b.groupPoints;
 }

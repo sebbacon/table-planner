@@ -5,6 +5,18 @@ export type PairStrength = "high" | "medium" | "low";
 export type HeadSeatConstraintType = "prefer_head" | "avoid_head";
 export type ConstraintType = PairConstraintType | HeadSeatConstraintType;
 
+export type ColumnMode = "ignore" | "spread" | "cluster" | "neighbours" | "table";
+
+export interface GuestColumn {
+  id: string;
+  label: string;
+  mode: ColumnMode;
+  values: Record<string, string[]>;
+  tableMapping: Record<string, number | null>;
+  /** Keeps labels edited in the original comma-separated guest list in sync. */
+  legacyGroups?: boolean;
+}
+
 export interface Guest {
   id: string;
   name: string;
@@ -41,6 +53,9 @@ export interface Seat {
 
 export type SeatProximity = "left_right" | "opposite" | "end" | "diagonal" | "none";
 
+/** Guest identity to exact seat id; applies across candidate and saved plans. */
+export type SeatPins = Record<string, number>;
+
 export type SeatAssignments = Record<number, string | null>;
 
 // --- Venue / table configuration ---
@@ -64,6 +79,8 @@ export interface CircularTableConfig {
 export type TableConfig = RectTableConfig | CircularTableConfig;
 
 export interface VenueConfig {
+  /** Monotonic allocation prevents a removed table identity being reused. */
+  nextTableId?: number;
   positions?: Record<number, { x: number; y: number }>;
   tables: TableConfig[];
 }
@@ -106,6 +123,8 @@ export interface ScoreBreakdown {
   avoidPoints: number;
   headSeatPoints: number;
   groupPoints: number;
+  clusterPoints: number;
+  columnResults: { columnId: string; label: string; mode: ColumnMode; points: number }[];
   preferred: PairScoreResult[];
   avoided: PairScoreResult[];
   headSeat: HeadSeatScoreResult[];

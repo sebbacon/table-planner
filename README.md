@@ -32,24 +32,29 @@ Alex Lee, Friends, Younger
 Pat Morgan
 ```
 
-**Choose spreadsheet** reads CSV, TSV, or Excel files locally. Preview the detected names and warnings before accepting. Importing a spreadsheet replaces guests and clears preferences and current/saved plans; it can be undone. **Try an example** provides sample guests when the list is empty.
+**Choose spreadsheet** reads CSV, TSV, or Excel files locally. Preview the names and other columns before accepting. Confirm whether the first row contains headings, choose one or two name columns, and uncheck any columns you do not want to import. All imported columns start with no seating effect. Importing a spreadsheet replaces guests and clears preferences and current/saved plans; it can be undone. **Try an example** provides sample guests when the list is empty.
 
-**Seating preferences** is optional and collapsed by default:
+**Seating preferences** is optional. Each preference group is collapsible and starts collapsed, with its count visible:
 
 - **Seat near each other:** choose **Sit next to each other**, **Sit where they can chat**, or **Share a table**. Chatting includes neighbours, opposite seats and diagonals on long tables, or neighbours and next-but-one on circular tables. Sharing a table gives equal credit anywhere at that table. Choose **Normal** or **High** priority independently; High doubles the scoring weight without changing which seats qualify. Expand **How seating preferences work** for illustrated examples.
 - **Keep apart:** prefer separate tables. On long tables, the penalty fades quickly with distance in seat spacings, leaving only a small penalty several seats away. On circular tables, the shared-table penalty stays constant at every distance. The review panel flags pairs still sharing a table, even when seated far apart. Room-canvas positions do not affect distance scoring.
 - **End-seat preferences:** prefer or avoid end seats on long tables. These controls appear when the venue has end seats.
-- **Mix guests from the same group:** optional mixing of group labels. Explicit seating preferences take priority. Disabled for new sessions; existing backups retain their previous group-mixing behaviour.
+- **Rules from guest columns:** choose a purpose for each imported column: **Don’t use for seating**, **Spread across tables**, **Group at the same table**, **Mix neighbouring seats**, or **Table assignment**. Spreading accounts for table capacities and overall group proportions. Clustering prefers matching values at the same table; large groups can span several tables. Blank cells are unspecified. Same-table grouping takes priority over spreading and neighbour mixing. All column preferences come after individual seating preference scores. Rules within each tier have equal importance.
+- **Table assignment:** map each nonblank spreadsheet value (for example, “A” or “VIP”) to a table explicitly. Matching names provide suggestions for you to accept. Links use stable table identities, so renaming a table preserves assignments. Removing a table requires remapping its values; newly added tables never reuse removed identities. Missing mappings, conflicting assignments, and overfilled tables block generation. Manual moves and saved-plan loading cannot create new violations of fixed assignments.
 
 Older backups map “Neighbours” to next-to with High priority, and “Neighbours or opposite” / “Anywhere nearby” to chatting with Normal priority. Explicit new preference and priority fields take precedence over legacy fields.
 
-These are weighted preferences, not guarantees. Conflicting preferences are flagged during setup.
+Individual and group rules are weighted preferences. Fixed table assignments are guarantees. The solver compares individual preference scores first, then same-table column grouping, then spreading and neighbour mixing. Lower-tier improvements cannot outweigh a higher-tier improvement. Conflicting preferences are flagged during setup.
+
+Existing comma-separated labels migrate to a **Groups** column with every membership preserved. Its original nearby-seat mixing setting remains enabled or disabled as before. Labels edited in the text guest list stay in sync. Existing plans, saved versions, guest identities, and individual preferences are preserved; older backups remain importable. New backups and local sessions use version 2 and include all column values, rules, and table mappings.
 
 Choose **Generate seating plans** when ready. Guests beyond the available capacity remain unseated.
 
 ### 2. Plan
 
 The app generates up to six alternatives and opens the best option. Review the seated count, unmet preferences, and alternatives. Hover or focus names in the issue lists to locate guests. Point totals are in **Scoring details**.
+
+**Pin seats.** Use the pin toggle beside an occupied seat number to keep that guest in that exact seat. Pins apply when generating more options, making manual moves, and opening saved plans. Unpin before moving a pinned guest or displacing them. The **Pinned seats** list in Setup and Plan also lets you remove pins, including conflicting or unavailable ones. Pins follow guest identities through renames and are included in local saving, backups, and Undo. Removing a guest removes their pin. Table renames keep pins; changing table geometry clears them along with the current and saved plans after the existing review. Conflicts between pins and fixed table assignments must be resolved before generating.
 
 Drag a guest to an empty seat to move them, or to an occupied seat to swap them. Dropping an unseated guest onto an occupied seat unseats its occupant. Guests can also be dragged to **Unseated guests**.
 
@@ -67,7 +72,7 @@ Kept versions are stored in the same browser as the working plan. They are not e
 
 The **Backup & restore** menu contains:
 
-- **Download backup:** JSON containing guests, stable guest identities, preferences, group-mixing settings, tables, the current plan, and kept versions.
+- **Download backup:** JSON containing guests, stable guest identities, preferences, guest columns and their rules, fixed table mappings, tables, the current plan, and kept versions.
 - **Restore backup:** review and replace the session from a downloaded JSON file. Restore can be undone. Older exports are still supported; those without table configuration use the default tables.
 
 Local saving errors are reported in the saving status. Unreadable sessions are left untouched until the user restores a backup or explicitly starts fresh.
