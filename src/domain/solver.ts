@@ -1,9 +1,10 @@
+import { resolveTableAssignments } from "./guestColumns";
 import { getPairPriority } from "./pairPreferences";
 import { getSeatIdsForTable, isHeadSeat } from "./seating";
-import { createEmptyAssignments, getGuestSeatIds, scorePlan, scoreSeatPreference } from "./scoring";
+import { comparePreferenceScores, createEmptyAssignments, getGuestSeatIds, scorePlan, scoreSeatPreference } from "./scoring";
 import { isHeadSeatConstraint, isPairConstraint } from "./types";
 import { findPreferredTable, getTablePullWeight, isHeadSwapAllowed } from "./solverPreferences";
-import type { Constraint, ConstraintPair, Guest, Plan, ScoreBreakdown, SeatingLayout, SeatAssignments } from "./types";
+import type { Constraint, ConstraintPair, Guest, GuestColumn, Plan, ScoreBreakdown, SeatingLayout, SeatPins, SeatAssignments } from "./types";
 
 export interface ScoredPlan {
   plan: Plan;
@@ -19,6 +20,8 @@ export interface GeneratePlansOptions {
   improveIterations?: number;
   rng?: () => number;
   mixGroups?: boolean;
+  columns?: GuestColumn[];
+  seatPins?: SeatPins;
 }
 
 export const EFFORT_LEVELS = [
@@ -39,8 +42,12 @@ export function generatePlans({
   attempts = EFFORT_LEVELS[DEFAULT_EFFORT - 1].attempts,
   improveIterations = EFFORT_LEVELS[DEFAULT_EFFORT - 1].improveIterations,
   rng = Math.random,
-  mixGroups = true
+  mixGroups = true,
+  columns,
+  seatPins = {}
 }: GeneratePlansOptions): ScoredPlan[] {
+  const fixed = resolveTableAssignments(columns ?? [], guests, layout, seatPins);
+  if (fixed.issues.length) throw new Error(fixed.issues.join(" "));
   const candidates: ScoredPlan[] = [];
   const signatures = new Set<string>();
   const guestIds = guests.map((guest) => guest.id);
@@ -56,8 +63,8 @@ export function generatePlans({
   );
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const plan = createRandomPlan(guestIds, preferHeadIds, avoidHeadIds, preferPairs, layout, rng, `candidate-${attempt}`);
-    improvePlan(plan, guests, constraints, preferHeadIds, avoidHeadIds, preferPairs, layout, improveIterations, rng, mixGroups);
+    const plan = createRandomPlan(guestIds, preferHeadIds, avoidHeadIds, preferPairs, layout, rng, `candidate-${attempt}`, fixed.assignments, seatPins);
+    improvePlan(plan, guests, constraints, preferHeadIds, avoidHeadIds, preferPairs, layout, improveIterations, rng, mixGroups, columns, fixed.assignments, seatPins);
     const signature = getPlanSignature(plan, layout);
 
     if (signatures.has(signature)) continue;
@@ -65,15 +72,11 @@ export function generatePlans({
     signatures.add(signature);
     candidates.push({
       plan,
-      score: scorePlan(plan, guests, constraints, layout, mixGroups)
+      score: scorePlan(plan, guests, constraints, layout, mixGroups, columns)
     });
   }
 
-  return candidates.sort((a, b) => {
-    const cDiff = b.score.constraintPoints - a.score.constraintPoints;
-    if (cDiff !== 0) return cDiff;
-    return b.score.groupPoints - a.score.groupPoints;
-  }).slice(0, count);
+  return candidates.sort((a, b) => comparePreferenceScores(b.score, a.score)).slice(0, count);
 }
 
 function createRandomPlan(
@@ -83,7 +86,9 @@ function createRandomPlan(
   preferPairs: ConstraintPair[],
   layout: SeatingLayout,
   rng: () => number,
-  id: string
+  id: string,
+  fixed: Map<string, number>,
+  seatPins: SeatPins
 ): Plan {
   const assignments = createEmptyAssignments(layout);
 
@@ -94,15 +99,28 @@ function createRandomPlan(
   const tableSeatIds = layout.tableIds.map((tableId) => getSeatIdsForTable(tableId, layout));
   const caps = computeTableCaps(tableSeatIds, n);
 
-  const { tableGuests } = partitionGuestsByTable(
-    guestIds.slice(0, n), preferPairs, layout.tableIds, caps, rng
-  );
+  const selected = [...guestIds.filter(id => fixed.has(id)), ...guestIds.filter(id => !fixed.has(id))].slice(0, n);
+  // Fixed guests take capacity first; redistribute the proportional occupancy
+  // targets without exceeding any table's actual capacity.
+  const minimums = layout.tableIds.map(id => selected.filter(guestId => fixed.get(guestId) === id).length);
+  for (let i = 0; i < caps.length; i++) {
+    while (caps[i] < minimums[i]) {
+      const donor = caps.findIndex((cap, j) => cap > minimums[j]);
+      if (donor < 0) break;
+      caps[donor]--;
+      caps[i]++;
+    }
+  }
+  const { tableGuests } = partitionGuestsByTable(selected, preferPairs, layout.tableIds, caps, rng, fixed);
 
+  const pinnedGuests = new Set(Object.keys(seatPins));
+  const pinnedSeats = new Set(Object.values(seatPins));
+  for (const [guestId, seatId] of Object.entries(seatPins)) assignments[seatId] = guestId;
   for (let i = 0; i < layout.tableIds.length; i++) {
-    assignToTable(tableGuests[i], tableSeatIds[i], preferHeadIds, avoidHeadIds, layout, assignments, rng);
+    assignToTable(tableGuests[i].filter(id => !pinnedGuests.has(id)), tableSeatIds[i].filter(id => !pinnedSeats.has(id)), preferHeadIds, avoidHeadIds, layout, assignments, rng);
   }
 
-  return { id, assignments, holdingGuestIds: guestIds.slice(n) };
+  return { id, assignments, holdingGuestIds: guestIds.filter(id => !selected.includes(id)) };
 }
 
 function computeTableCaps(tableSeatIds: number[][], n: number): number[] {
@@ -135,7 +153,8 @@ function partitionGuestsByTable(
   preferPairs: ConstraintPair[],
   tableIds: number[],
   caps: number[],
-  rng: () => number
+  rng: () => number,
+  fixed: Map<string, number>
 ): { tableGuests: string[][] } {
   const guestSet = new Set(guestIds);
   const tableOf = new Map<string, number>(); // guestId → tableId
@@ -169,6 +188,8 @@ function partitionGuestsByTable(
     const availableTableIds = tableIds.filter((id, i) => (counts.get(id) ?? 0) < caps[i]);
     return findPreferredTable(guestIdsToPlace, preferPairs, tableOf, availableTableIds);
   }
+
+  for (const [guestId, tableId] of fixed) tryAssign(guestId, tableId);
 
   const sortedPairs = [...preferPairs].sort(
     (a, b) => getTablePullWeight(b) - getTablePullWeight(a)
@@ -259,10 +280,23 @@ function improvePlan(
   layout: SeatingLayout,
   iterations: number,
   rng: () => number,
-  mixGroups: boolean
+  mixGroups: boolean,
+  columns: GuestColumn[] | undefined,
+  fixed: Map<string, number>,
+  seatPins: SeatPins
 ): void {
-  let currentScore = scorePlan(plan, guests, constraints, layout, mixGroups).total;
-  const swappableSeatIds = [...layout.seatIds];
+  let currentScore = scorePlan(plan, guests, constraints, layout, mixGroups, columns);
+  let bestScore = currentScore;
+  let bestAssignments = { ...plan.assignments };
+  function fixedSwapAllowed(a: number, b: number) {
+    const guestA = plan.assignments[a];
+    const guestB = plan.assignments[b];
+    return (!guestA || !fixed.has(guestA) || fixed.get(guestA) === layout.seatsById.get(b)?.tableId)
+      && (!guestB || !fixed.has(guestB) || fixed.get(guestB) === layout.seatsById.get(a)?.tableId);
+  }
+  const pinnedSeats = new Set(Object.values(seatPins));
+  const swappableSeatIds = layout.seatIds.filter(id => !pinnedSeats.has(id));
+  if (swappableSeatIds.length < 2) return;
   const kickThreshold = Math.max(50, Math.floor(iterations * 0.10));
   let noImprovementCount = 0;
 
@@ -271,13 +305,17 @@ function improvePlan(
       for (let k = 0; k < 4; k += 1) {
         const a = randomItem(swappableSeatIds, rng);
         const b = randomItem(swappableSeatIds, rng);
-        if (a !== b
+        if (a !== b && fixedSwapAllowed(a, b)
           && isHeadSwapAllowed(a, b, plan.assignments, preferHeadIds, avoidHeadIds, layout)
         ) {
           swapAssignments(plan.assignments, a, b);
         }
       }
-      currentScore = scorePlan(plan, guests, constraints, layout, mixGroups).total;
+      currentScore = scorePlan(plan, guests, constraints, layout, mixGroups, columns);
+      if (comparePreferenceScores(currentScore, bestScore) > 0) {
+        bestScore = currentScore;
+        bestAssignments = { ...plan.assignments };
+      }
       noImprovementCount = 0;
       continue;
     }
@@ -296,14 +334,16 @@ function improvePlan(
       seatBId = randomItem(swappableSeatIds, rng);
     }
 
-    if (seatAId === seatBId) continue;
+    if (pinnedSeats.has(seatAId) || pinnedSeats.has(seatBId)) continue;
+    if (seatAId === seatBId || !fixedSwapAllowed(seatAId, seatBId)) continue;
     if (!isHeadSwapAllowed(seatAId, seatBId, plan.assignments, preferHeadIds, avoidHeadIds, layout)) continue;
 
     swapAssignments(plan.assignments, seatAId, seatBId);
-    const nextScore = scorePlan(plan, guests, constraints, layout, mixGroups).total;
-    const keepWorseMove = nextScore < currentScore && rng() < 0.012;
+    const nextScore = scorePlan(plan, guests, constraints, layout, mixGroups, columns);
+    const comparison = comparePreferenceScores(nextScore, currentScore);
+    const keepWorseMove = comparison < 0 && rng() < 0.012;
 
-    if (nextScore > currentScore) {
+    if (comparison > 0) {
       currentScore = nextScore;
       noImprovementCount = 0;
     } else if (keepWorseMove) {
@@ -313,7 +353,12 @@ function improvePlan(
       swapAssignments(plan.assignments, seatAId, seatBId);
       noImprovementCount += 1;
     }
+    if (comparePreferenceScores(currentScore, bestScore) > 0) {
+      bestScore = currentScore;
+      bestAssignments = { ...plan.assignments };
+    }
   }
+  plan.assignments = bestAssignments;
 }
 
 function findGuidedSwap(
