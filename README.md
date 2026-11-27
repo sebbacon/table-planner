@@ -70,6 +70,10 @@ For click, touch, or keyboard input, select a guest on the canvas or in **Move o
 
 Kept versions are stored in the same browser as the working plan. They are not external backups.
 
+**Share plan → Copy share link** creates a snapshot containing guest names and identities, seating preferences, guest columns and fixed table mappings, table geometry and room positions, seat pins, and the current seating plan. Saved versions, generated alternatives, undo history, and unapplied guest-list drafts are excluded. Apply drafts with **Done** before sharing.
+
+The compressed snapshot is carried in the URL fragment (`#plan=…`), so sharing needs no backend. Anyone with the link can read the included data. Later edits require a new link. Opening a link previews it before replacing the local session; **Undo** restores the previous session. Once opened or cancelled, the fragment is removed so reloading uses the current local session. Long links show a reminder to use a backup if a messaging app cannot send them; oversized plans must use backups.
+
 The **Backup & restore** menu contains:
 
 - **Download backup:** JSON containing guests, stable guest identities, preferences, guest columns and their rules, fixed table mappings, tables, the current plan, and kept versions.
@@ -83,7 +87,7 @@ The GitHub Actions workflow in `.github/workflows/deploy.yml` builds and deploys
 
 For a local production preview, run `npm run build` followed by `npm run preview`, then open `http://localhost:4173/table-planner/`. The base path is `/table-planner/`.
 
-Moving between the local and hosted app requires downloading and restoring a backup because they have separate browser storage.
+The local and hosted app have separate browser storage. Transfer a snapshot using a share link (with its base URL changed to the destination app), or download and restore a backup to include saved versions.
 
 ## Code quality
 

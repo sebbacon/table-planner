@@ -1,4 +1,6 @@
 import { GuestColumnsEditor } from "./GuestColumnsEditor";
+import { SharePlanDialog } from "./SharePlanDialog";
+import { clearShareHash, createShareUrl, readShareHash } from "./domain/share";
 import { SpreadsheetImportDialog } from "./SpreadsheetImportDialog";
 import { legacyGroupColumn, reconcileColumns, resolveTableAssignments, seatPinViolations, tableAssignmentViolations } from "./domain/guestColumns";
 import { PreferenceGuide } from "./PreferenceGuide";
@@ -54,6 +56,9 @@ export function App() {
   const [editingTables, setEditingTables] = useState(false);
   const [ready, setReady] = useState(false);
   const [storageBlocked, setStorageBlocked] = useState(false);
+  const [shareUrl, setShareUrl] = useState("");
+  const [isSharing, setIsSharing] = useState(false);
+  const [sharedPlan, setSharedPlan] = useState<PlannerData | null>(null);
   const [history, setHistory] = useState<{
     data: PlannerData;
     candidates: ScoredPlan[];
@@ -84,6 +89,26 @@ export function App() {
       setImportError("Your saved session could not be loaded. Restore a backup, or start fresh. The unreadable session has not been overwritten.");
     }
     setReady(true);
+  }, []);
+  useEffect(() => {
+    let request = 0;
+    function loadSharedPlan() {
+      const current = ++request;
+      readShareHash(window.location.hash).then(data => {
+        if (current === request) setSharedPlan(data);
+      }).catch(error => {
+        if (current === request) {
+          setSharedPlan(null);
+          setImportError(error instanceof Error ? error.message : "This share link could not be opened.");
+        }
+      });
+    }
+    loadSharedPlan();
+    window.addEventListener("hashchange", loadSharedPlan);
+    return () => {
+      request++;
+      window.removeEventListener("hashchange", loadSharedPlan);
+    };
   }, []);
   const parseResult = useMemo(() => parseGuestText(guestText, guestIds), [guestText, guestIds]);
   const guests = parseResult.guests;
@@ -283,6 +308,16 @@ export function App() {
     setNotice("Backup downloaded. Keep it to restore your work in another browser or device.");
     if (fileMenuRef.current) fileMenuRef.current.open = false;
   }
+  async function handleShare() {
+    setIsSharing(true);
+    try {
+      setShareUrl(await createShareUrl(currentData(), window.location.href));
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Could not create a share link. Download a backup instead.");
+    } finally {
+      setIsSharing(false);
+    }
+  }
   async function handleShuffle() {
     if (!guests.length || isShuffling || fixedTables.issues.length) return;
     setIsShuffling(true);
@@ -436,6 +471,7 @@ export function App() {
       </div>
       <div className="top-actions">
         <button type="button" onClick={undo} disabled={!history.length || isShuffling || guestDraftChanged}>Undo</button>
+        <button type="button" onClick={handleShare} disabled={!ready || !hasSaveableData || guestDraftChanged || isShuffling || isSharing}>{isSharing ? "Creating link…" : "Share plan"}</button>
         <details className="file-menu" ref={fileMenuRef}>
           <summary>Backup &amp; restore <ChevronDown size={15} /></summary>
           <div className="file-menu-content">
@@ -447,10 +483,10 @@ export function App() {
       </div>
     </header>
     <div className="local-banner">
-      <p>Your guest list stays on this device. Plans are generated in your browser.</p>
+      <p>Your guest list stays on this device unless you share it. Plans are generated in your browser.</p>
       <details>
         <summary>How saving works</summary>
-        <p>Changes are saved automatically in this browser. Other browsers and devices have separate data. Clearing browser data removes your saved plans. Download a backup to keep a separate copy or move your work. Guest-list drafts are applied with Done.</p>
+        <p>Changes are saved automatically in this browser. Other browsers and devices have separate data. Clearing browser data removes your saved plans. Share a link to send a snapshot of your current plan, or download a backup including saved versions. Anyone with a share link can read its guest names and preferences. Guest-list drafts are applied with Done.</p>
       </details>
       <span className="save-status" role="status">{saveStatus}</span>
     </div>
@@ -665,6 +701,21 @@ export function App() {
       setImportWarnings(result.warnings);
       setPhase("setup");
       setNotice(`Imported ${result.importedCount} guests and ${result.columns.length} columns. Choose how to use columns in Seating preferences.`);
+    }} />}
+    {shareUrl && <SharePlanDialog url={shareUrl} onClose={() => setShareUrl("")} />}
+    {sharedPlan && <ReviewDialog title="Open shared plan?" description={`${parseGuestText(sharedPlan.guestText).guests.length} guests · ${sharedPlan.constraints.length} seating preferences. This replaces your current session, including saved versions. You can undo this change.`} confirm="Open shared plan" onCancel={() => {
+      setSharedPlan(null);
+      clearShareHash();
+    }} onConfirm={() => {
+      remember();
+      restoreData(sharedPlan);
+      setCandidates([]);
+      setImportWarnings([]);
+      setImportError("");
+      setPhase(sharedPlan.activePlan ? "planning" : "setup");
+      setNotice("Shared plan opened. Changes are saved in this browser. Share a new link to send your edits.");
+      setSharedPlan(null);
+      clearShareHash();
     }} />}
     {pending && <ReviewDialog title={pending.title} description={pending.description} preview={pending.preview} confirm={pending.confirm} onCancel={() => setPending(null)} onConfirm={() => {
       pending.apply();

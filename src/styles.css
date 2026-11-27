@@ -1637,6 +1637,19 @@ input[type="checkbox"] {
   background: #17212ac0;
 }
 
+.share-dialog {
+  width: min(560px, calc(100vw - 2rem));
+}
+
+.share-dialog input {
+  width: 100%;
+  margin-top: .4rem;
+  padding: .6rem;
+  border: 1px solid #c8ced3;
+  border-radius: 5px;
+  font: inherit;
+}
+
 .review-dialog h2 {
   font-size: 1.3rem;
   margin-bottom: .8rem;
