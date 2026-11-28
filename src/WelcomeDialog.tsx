@@ -33,7 +33,7 @@ export function WelcomeDialog({ suspended = false }: { suspended?: boolean }) {
     <p>Get a first draft, then make it yours.</p>
     <ol>
       <li><strong>Add your tables and guests.</strong> Start with a few rules: perhaps a fixed top table, then keeping friends together or mixing departments.</li>
-      <li><strong>Generate some options.</strong> Pins and fixed tables come first, then individual preferences, then group rules. More rules can compete; fewer leave room for a good mix.</li>
+      <li><strong>Generate some options.</strong> Pins come first, then table assignments, individual preferences and group rules. More rules can compete; fewer leave room for a good mix.</li>
       <li><strong>Keep the good bits.</strong> Pin guests whose seats you want to keep and generate again for fresh options. Finish by moving or swapping guests by hand.</li>
     </ol>
     <p>Changes save only in this browser. Keep a share link or download a backup for a separate copy. After editing, create a new link or backup; old copies do not update.</p>

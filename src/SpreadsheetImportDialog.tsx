@@ -23,8 +23,8 @@ export function SpreadsheetImportDialog({ rows, onCancel, onImport }: {
     return () => dialog?.close();
   }, []);
   return <dialog className="review-dialog spreadsheet-preview" ref={ref} aria-labelledby="spreadsheet-title" onCancel={event => { event.preventDefault(); onCancel(); }}>
-    <h2 id="spreadsheet-title">Review spreadsheet import</h2>
-    <p>This replaces your guest list and clears seating preferences, the current plan, and saved versions. You can undo this change.</p>
+    <h2 id="spreadsheet-title">Review guest data</h2>
+    <p>Review these guests in the grid before choosing Done. Matching names keep their seats and preferences. Imported attribute columns replace your current columns; a names-only list keeps them. Cancel leaves your applied guest list unchanged.</p>
     <p>Use a heading for each attribute, such as Household or Department. Guests with the same value form a group within that column. Choose a separate seating purpose for each column below; blank cells have no effect.</p>
     <label className="mix-setting"><input type="checkbox" checked={options.hasHeader} onChange={event => setOptions({ ...options, hasHeader: event.target.checked })} /> First row contains column headings</label>
     <div className="spreadsheet-name-columns">
@@ -39,7 +39,7 @@ export function SpreadsheetImportDialog({ rows, onCancel, onImport }: {
     </div>
     <fieldset><legend>Other columns to import</legend>
       {headers.map((label, index) => !options.nameColumns.includes(index) && <label className="mix-setting" key={index}><input type="checkbox" checked={!ignored.includes(index)} onChange={event => setIgnored(previous => event.target.checked ? previous.filter(value => value !== index) : [...previous, index])} />{label}</label>)}
-      <p className="muted-text">Columns have no seating effect until you choose a purpose. Table assignments need a table mapping in Setup after import.</p>
+      <p className="muted-text">Columns have no seating effect until you choose a purpose. For table assignments, choose Done in the guest grid and we’ll take you straight to the table choices.</p>
     </fieldset>
     {result.columns.length > 0 && <div className="import-column-purposes">
       <h3>How should these columns affect seating?</h3>

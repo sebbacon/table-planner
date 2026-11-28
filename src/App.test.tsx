@@ -19,8 +19,20 @@ function seed(data: PlannerData = initial) { localStorage.setItem(storageKey, JS
 function saved(): PlannerData { return JSON.parse(localStorage.getItem(storageKey) ?? "{}"); }
 async function editGuests(user: ReturnType<typeof userEvent.setup>, text: string) {
   await user.click(screen.getByRole("button", { name: "1. Setup" }));
-  await user.click(screen.getByRole("button", { name: /edit names|paste or type names/i }));
-  fireEvent.change(screen.getByLabelText("Guest list"), { target: { value: text } });
+  await user.click(screen.getByRole("button", { name: /edit guests|add or paste guests/i }));
+  const names = text.split("\n");
+  const cells = screen.getAllByRole("textbox", { name: /^Guest name, row/ });
+  const changed = names.map((name, index) => name !== (cells[index] as HTMLInputElement)?.value ? index : -1).filter(index => index >= 0);
+  if (text && names.length === cells.length && changed.length === 1) {
+    fireEvent.change(cells[changed[0]], { target: { value: names[changed[0]] } });
+  } else if (text) {
+    await user.click(screen.getByText("Paste names or a table", { selector: "summary" }));
+    fireEvent.change(screen.getByLabelText("Paste guest data"), { target: { value: text } });
+    await user.click(screen.getByRole("button", { name: "Review pasted data" }));
+    await user.click(within(await screen.findByRole("dialog", { name: "Review guest data" })).getByRole("button", { name: "Use this guest list" }));
+  } else {
+    while (screen.queryByRole("button", { name: "Remove guest, row 1" })) await user.click(screen.getByRole("button", { name: "Remove guest, row 1" }));
+  }
   await user.click(screen.getByRole("button", { name: "Done" }));
   const review = screen.queryByRole("dialog", { name: "Review guest-list changes" });
   if (review) await user.click(within(review).getByRole("button", { name: "Apply guest changes" }));
@@ -96,8 +108,10 @@ describe("guided setup", () => {
       const group = screen.getByText(title, { selector: "h2" }).closest("details")!;
       expect(group).not.toHaveAttribute("open");
     }
-    await user.click(screen.getByRole("button", { name: "Paste or type names" }));
-    fireEvent.change(screen.getByLabelText("Guest list"), { target: { value: "Jane Smith\nSam Jones" } });
+    await user.click(screen.getByRole("button", { name: "Add or paste guests" }));
+    fireEvent.change(screen.getByLabelText("Guest name, row 1"), { target: { value: "Jane Smith" } });
+    await user.click(screen.getByRole("button", { name: "Add guest" }));
+    fireEvent.change(screen.getByLabelText("Guest name, row 2"), { target: { value: "Sam Jones" } });
     expect(screen.getByRole("button", { name: "Generate seating plans" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Done" }));
     expect(screen.getByRole("button", { name: "Generate seating plans" })).toBeEnabled();
@@ -110,13 +124,13 @@ describe("guided setup", () => {
     seed();
     render(<App />);
     await user.click(screen.getByRole("button", { name: "1. Setup" }));
-    await user.click(screen.getByRole("button", { name: "Edit names" }));
-    await user.clear(screen.getByLabelText("Guest list"));
+    await user.click(screen.getByRole("button", { name: "Edit guests" }));
+    await user.clear(screen.getByLabelText("Guest name, row 1"));
     expect(screen.getByText("3 guests for 39 seats")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "2. Plan" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
-    await user.click(screen.getByRole("button", { name: "Edit names" }));
-    expect(screen.getByLabelText("Guest list")).toHaveValue(initial.guestText);
+    await user.click(screen.getByRole("button", { name: "Edit guests" }));
+    expect(screen.getByLabelText("Guest name, row 1")).toHaveValue("Jane Smith");
   });
 
   it("generates plans, exposes useful summaries, and supports keeping a named version", async () => {
@@ -149,6 +163,7 @@ describe("guided setup", () => {
     expect(within(dialog).getByRole("cell", { name: "F" })).toBeInTheDocument();
     expect(screen.getByText("3 guests for 39 seats")).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Use this guest list" }));
+    await user.click(screen.getByRole("button", { name: "Done" }));
     expect(screen.getByText("2 guests for 39 seats")).toBeInTheDocument();
     await waitFor(() => expect(saved().constraints).toEqual([]));
     await user.click(screen.getByRole("button", { name: "Undo" }));
@@ -496,11 +511,9 @@ it("provides an explicit rename that preserves seats and preferences before inse
   seed();
   render(<App />);
   await user.click(screen.getByRole("button", { name: "1. Setup" }));
-  await user.click(screen.getByText("View guest list (3)"));
-  await user.click(screen.getByRole("button", { name: "Rename Jane Smith" }));
-  await user.clear(screen.getByLabelText("Guest name"));
-  await user.type(screen.getByLabelText("Guest name"), "Jane Cooper");
-  await user.click(screen.getByRole("button", { name: "Apply name" }));
+  await user.click(screen.getByRole("button", { name: "Edit guests" }));
+  fireEvent.change(screen.getByLabelText("Guest name, row 1"), { target: { value: "Jane Cooper" } });
+  await user.click(screen.getByRole("button", { name: "Done" }));
   await editGuests(user, "Robin Green\nSam Jones\nJane Cooper\nAlex Brown");
   await waitFor(() => expect(saved().guestText).toContain("Robin Green"));
   expect(saved().activePlan?.assignments).toEqual(initial.activePlan?.assignments);
@@ -537,12 +550,13 @@ it("previews arbitrary headers, selects names, skips columns, and activates only
   const user = userEvent.setup();
   render(<App />);
   await user.upload(screen.getByLabelText("Choose guest spreadsheet"), new File(["Team,Display,Notes\nBlue,Jane,Private\nRed,Sam,Private"], "guests.csv", { type: "text/csv" }));
-  const dialog = await screen.findByRole("dialog", { name: "Review spreadsheet import" });
+  const dialog = await screen.findByRole("dialog", { name: "Review guest data" });
   await user.click(within(dialog).getByLabelText("First row contains column headings"));
   await user.selectOptions(within(dialog).getByLabelText("Name column"), "1");
   await user.click(within(dialog).getByLabelText("Notes"));
   expect(within(dialog).queryByRole("columnheader", { name: "Notes" })).not.toBeInTheDocument();
   await user.click(within(dialog).getByRole("button", { name: "Use this guest list" }));
+    await user.click(screen.getByRole("button", { name: "Done" }));
   await openColumnRules(user);
   expect(screen.getByLabelText("Seating purpose for Team")).toHaveValue("ignore");
   await user.selectOptions(screen.getByLabelText("Seating purpose for Team"), "cluster");
@@ -560,7 +574,8 @@ it("requires explicit table mapping, preserves it through renames, and requires 
   await openColumnRules(user);
   await user.selectOptions(screen.getByLabelText("Seating purpose for Table"), "table");
   expect(screen.getByRole("button", { name: "Generate seating plans" })).toBeDisabled();
-  expect(screen.getByRole("alert")).toHaveTextContent("choose a table for “Table 1”");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Table for Table: Table 1")).toHaveFocus();
   expect(screen.getByLabelText("Table for Table: Table 1")).toHaveValue("");
   await user.click(screen.getByRole("button", { name: "Use suggested table: Table 1" }));
   expect(screen.getByRole("button", { name: "Generate seating plans" })).toBeEnabled();
@@ -599,7 +614,7 @@ it("preserves column memberships through guest renames and reordering, and remov
   expect(saved().columns).toEqual(columns);
 });
 
-it("prevents manual swaps or unseating from breaking fixed table assignments", async () => {
+it("allows manual cross-table swaps, keyboard moves and unseating to override table assignments", async () => {
   const user = userEvent.setup();
   const data: PlannerData = { ...initial, guestIds: ["jane", "alex", "sam"], constraints: [],
     venueConfig: { tables: [1, 2].map(id => ({ id, kind: "circular" as const, seats: 3 })) },
@@ -611,15 +626,73 @@ it("prevents manual swaps or unseating from breaking fixed table assignments", a
   const seating = within(screen.getByLabelText("Seating layout"));
   fireEvent.dragStart(seating.getByRole("button", { name: "Jane Smith" }));
   fireEvent.drop(seating.getByRole("button", { name: "Sam Jones" }).parentElement!);
-  expect(screen.getByRole("alert")).toHaveTextContent("Jane Smith must sit at Table 1");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  fireEvent(window, new Event("pagehide"));
+  expect(saved().activePlan?.assignments).toMatchObject({ 1: "sam", 4: "jane" });
+  expect(saved().columns).toEqual(data.columns);
+  await user.click(screen.getByRole("button", { name: "Undo" }));
   fireEvent(window, new Event("pagehide"));
   expect(saved().activePlan).toEqual(data.activePlan);
-  await user.click(screen.getByRole("button", { name: "Dismiss" }));
+  await user.selectOptions(screen.getByLabelText("Guest", { selector: "select" }), "jane");
+  await user.selectOptions(screen.getByLabelText("Destination"), "5");
+  await user.click(screen.getByRole("button", { name: "Move / swap" }));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  fireEvent(window, new Event("pagehide"));
+  expect(saved().activePlan?.assignments[5]).toBe("jane");
   fireEvent.dragStart(seating.getByRole("button", { name: "Jane Smith" }));
   fireEvent.drop(screen.getByText("Unseated guests (1)").parentElement!);
-  expect(screen.getByRole("alert")).toHaveTextContent("Jane Smith must sit at Table 1");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   fireEvent(window, new Event("pagehide"));
-  expect(saved().activePlan).toEqual(data.activePlan);
+  expect(saved().activePlan?.holdingGuestIds).toContain("jane");
+});
+
+it("allows manual moves even while table choices are incomplete", () => {
+  seed({ ...initial, columns: [{ id: "table", label: "Table", mode: "table", values: { "guest-1-jane-smith": ["VIP"] }, tableMapping: {} }] });
+  render(<App />);
+  const seating = within(screen.getByLabelText("Seating layout"));
+  fireEvent.dragStart(seating.getByRole("button", { name: "Jane Smith" }));
+  fireEvent.drop(seating.getByRole("button", { name: "Sam Jones" }).parentElement!);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Generate more options" })).toBeDisabled();
+  fireEvent(window, new Event("pagehide"));
+  expect(saved().activePlan?.assignments).toMatchObject({ 1: "guest-3-sam-jones", 2: "guest-1-jane-smith" });
+});
+
+it("keeps a manually moved guest on a different table when pinned, then follows the table rule after unpinning", async () => {
+  const user = userEvent.setup();
+  const generate = solver.generatePlans;
+  const spy = vi.spyOn(solver, "generatePlans").mockImplementation(options => generate({ ...options, attempts: 3, improveIterations: 20 }));
+  seed({ ...initial, guestIds: ["jane", "alex", "sam"], constraints: [], venueConfig: { tables: [1, 2].map(id => ({ id, kind: "circular" as const, seats: 3 })) }, columns: [{ id: "table", label: "Table", mode: "table", values: { jane: ["VIP"] }, tableMapping: { VIP: 1 } }], activePlan: { id: "fixed", assignments: { 1: "jane", 4: "sam" }, holdingGuestIds: ["alex"] } });
+  render(<App />);
+  const seating = within(screen.getByLabelText("Seating layout"));
+  fireEvent.dragStart(seating.getByRole("button", { name: "Jane Smith" }));
+  fireEvent.drop(seating.getByRole("button", { name: "Sam Jones" }).parentElement!);
+  await user.click(screen.getByRole("button", { name: "Pin Jane Smith to seat 4" }));
+  await user.click(screen.getByRole("button", { name: "Generate more options" }));
+  await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Generate more options" })).toBeEnabled());
+  fireEvent(window, new Event("pagehide"));
+  expect(saved().activePlan?.assignments[4]).toBe("jane");
+  expect(saved().seatPins).toEqual({ jane: 4 });
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Unpin Jane Smith from seat 4" }));
+  await user.click(screen.getByRole("button", { name: "Generate more options" }));
+  await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Generate more options" })).toBeEnabled());
+  fireEvent(window, new Event("pagehide"));
+  expect([1, 2, 3].some(seat => saved().activePlan?.assignments[seat] === "jane")).toBe(true);
+});
+
+it("needs no table mapping for pinned guests and asks for a choice again after unpinning", async () => {
+  const user = userEvent.setup();
+  seed({ ...initial, seatPins: { "guest-1-jane-smith": 1 }, columns: [{ id: "table", label: "Table", mode: "table", values: { "guest-1-jane-smith": ["VIP"] }, tableMapping: {} }] });
+  render(<App />);
+  expect(screen.getByRole("button", { name: "Generate more options" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "Choose tables" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Unpin Jane Smith from seat 1" }));
+  expect(screen.getByRole("button", { name: "Generate more options" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Choose tables" }));
+  expect(screen.getByLabelText("Table for Table: VIP")).toHaveFocus();
 });
 
 it.each(["rect", "circular"] as const)("toggles pins with the keyboard on a %s layout and preserves them through view changes and reloads", async kind => {
@@ -679,19 +752,20 @@ it("protects pinned seats against manual moves, displacement, and saved-plan loa
   expect(saved().activePlan?.assignments[2]).toBe("guest-1-jane-smith");
 });
 
-it("lets you resolve conflicting table and seat locks from the pin list", async () => {
+it("gives pins priority over table assignments and restores the assignment when unpinned", async () => {
   const user = userEvent.setup();
   seed({ ...initial, seatPins: { "guest-1-jane-smith": 1 }, columns: [{ id: "table", label: "Table", mode: "table", values: { "guest-1-jane-smith": ["VIP"] }, tableMapping: { VIP: 2 } }] });
   render(<App />);
-  expect(screen.getByRole("button", { name: "Generate more options" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Generate more options" })).toBeEnabled();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "1. Setup" }));
-  expect(screen.getByRole("alert")).toHaveTextContent("pinned at a different table");
-  expect(screen.getByRole("button", { name: "Generate seating plans" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Generate seating plans" })).toBeEnabled();
   await user.click(screen.getByText("Pinned seats (1)", { selector: "summary" }));
   await user.click(screen.getByRole("button", { name: "Unpin Jane Smith" }));
   expect(screen.getByRole("button", { name: "Generate seating plans" })).toBeEnabled();
   fireEvent(window, new Event("pagehide"));
   expect(saved().seatPins).toEqual({});
+  expect(saved().columns?.[0].tableMapping).toEqual({ VIP: 2 });
 });
 
 it("removes pins for deleted guests and restores them with Undo", async () => {
@@ -753,21 +827,24 @@ it("imports independent column purposes and shows their summary outside seating 
   const user = userEvent.setup();
   const view = render(<App />);
   await user.upload(screen.getByLabelText("Choose guest spreadsheet"), new File(["Name,Household,Department,Friendship group,Table,Notes\nJane,Smith,Finance,University,VIP,Private\nSam,Jones,Engineering,Running club,,Private"], "guests.csv", { type: "text/csv" }));
-  const dialog = await screen.findByRole("dialog", { name: "Review spreadsheet import" });
+  const dialog = await screen.findByRole("dialog", { name: "Review guest data" });
   for (const [column, mode] of [["Household", "cluster"], ["Department", "spread"], ["Friendship group", "neighbours"], ["Table", "table"]]) {
     await user.selectOptions(within(dialog).getByLabelText(`Seating purpose for ${column}`), mode);
   }
   await user.click(within(dialog).getByLabelText("Notes"));
   await user.click(within(dialog).getByRole("button", { name: "Use this guest list" }));
+    await user.click(screen.getByRole("button", { name: "Done" }));
   const summary = screen.getByRole("list", { name: "Column rule summary" });
   expect(summary).toBeVisible();
   expect(screen.getByText("Seating preferences", { selector: "summary" })).toHaveTextContent("Who should sit near whom?");
   expect(summary).toHaveTextContent("Household: Group at the same table");
   expect(summary).toHaveTextContent("Department: Spread across tables");
   expect(summary).toHaveTextContent("Friendship group: Mix neighbouring seats");
-  expect(summary).toHaveTextContent("Choose table mappings below");
+  expect(summary).toHaveTextContent("Tables to choose above");
   expect(screen.getByRole("button", { name: "Generate seating plans" })).toBeDisabled();
-  await user.click(screen.getByText("Edit column rules", { selector: "summary" }));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Table for Table: VIP")).toBeVisible();
+  expect(screen.getByLabelText("Table for Table: VIP")).toHaveFocus();
   await user.selectOptions(screen.getByLabelText("Table for Table: VIP"), "1");
   expect(screen.getByRole("button", { name: "Generate seating plans" })).toBeEnabled();
   fireEvent(window, new Event("pagehide"));
@@ -778,4 +855,138 @@ it("imports independent column purposes and shows their summary outside seating 
   expect(screen.getByRole("list", { name: "Column rule summary" })).toHaveTextContent("Department: Spread across tables");
   await user.click(screen.getByText("Edit column rules", { selector: "summary" }));
   expect(screen.getByLabelText("Table for Table: VIP")).toHaveValue("1");
+});
+
+it("edits guest identities, column headings and values together, preserving pins, mappings and Undo", async () => {
+  const user = userEvent.setup();
+  const column = { id: "household", label: "Household", mode: "table" as const, values: { "guest-1-jane-smith": ["Smith"] }, tableMapping: { Smith: 1 } };
+  seed({ ...initial, columns: [column], seatPins: { "guest-1-jane-smith": 1 } });
+  const view = render(<App />);
+  await user.click(screen.getByRole("button", { name: "1. Setup" }));
+  await user.click(screen.getByRole("button", { name: "Edit guests" }));
+  fireEvent.change(screen.getByLabelText("Guest name, row 1"), { target: { value: "Jane Cooper" } });
+  await user.click(screen.getByText("Edit columns", { selector: "summary" }));
+  fireEvent.change(screen.getByLabelText("Column heading: Household"), { target: { value: "Family" } });
+  await user.type(screen.getByLabelText("New column heading"), "Department");
+  await user.click(screen.getByRole("button", { name: "Add column" }));
+  await user.selectOptions(screen.getByLabelText("Seating purpose for Department"), "spread");
+  fireEvent.change(screen.getByLabelText("Department, row 1"), { target: { value: "Arts" } });
+  await user.click(screen.getByRole("button", { name: "Done" }));
+  fireEvent(window, new Event("pagehide"));
+  expect(saved().guestIds).toEqual(["guest-1-jane-smith", "guest-2-alex-brown", "guest-3-sam-jones"]);
+  expect(saved().seatPins).toEqual({ "guest-1-jane-smith": 1 });
+  expect(saved().activePlan).toEqual(initial.activePlan);
+  expect(saved().constraints).toEqual(initial.constraints);
+  expect(saved().columns?.[0]).toEqual({ ...column, label: "Family", values: { "guest-1-jane-smith": ["Smith"], "guest-2-alex-brown": [], "guest-3-sam-jones": [] } });
+  expect(saved().columns?.[1]).toMatchObject({ label: "Department", mode: "spread", values: { "guest-1-jane-smith": ["Arts"] } });
+  await user.click(screen.getByRole("button", { name: "Undo" }));
+  fireEvent(window, new Event("pagehide"));
+  expect(saved().columns).toEqual([column]);
+  expect(saved().guestText).toBe(initial.guestText);
+  view.unmount();
+  render(<App />);
+  await user.click(screen.getByRole("button", { name: "1. Setup" }));
+  await user.click(screen.getByRole("button", { name: "Edit guests" }));
+  expect(screen.getByLabelText("Guest name, row 1")).toHaveValue("Jane Smith");
+  expect(screen.getByLabelText("Household, row 1")).toHaveValue("Smith");
+});
+
+it("starts the example with independently configurable Friend group and Department columns", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+  await user.click(screen.getByRole("button", { name: "Try an example with 39 guests" }));
+  await user.click(screen.getByRole("button", { name: "Edit guests" }));
+  expect(screen.getByLabelText("Seating purpose for Friend group")).toHaveValue("cluster");
+  expect(screen.getByLabelText("Seating purpose for Department")).toHaveValue("spread");
+  expect(screen.queryByLabelText("Seating purpose for Groups")).not.toBeInTheDocument();
+  await user.selectOptions(screen.getByLabelText("Seating purpose for Department"), "neighbours");
+  await user.click(screen.getByRole("button", { name: "Done" }));
+  fireEvent(window, new Event("pagehide"));
+  expect(saved().columns?.map(column => [column.label, column.mode])).toEqual([["Friend group", "cluster"], ["Department", "neighbours"]]);
+});
+
+it("replaces older combined Groups with separate pasted CSV columns without losing guest identities or pins", async () => {
+  const user = userEvent.setup();
+  seed({ ...initial, guestText: "Jane,Family,Finance\nSam,Friends,Sales", guestIds: ["jane", "sam"], columns: undefined, activePlan: null, constraints: [], seatPins: { jane: 1 } });
+  render(<App />);
+  await user.click(screen.getByRole("button", { name: "Edit guests" }));
+  expect(screen.getByText(/Your older labels are combined/)).toBeVisible();
+  await user.click(screen.getByText("Paste names or a table", { selector: "summary" }));
+  fireEvent.change(screen.getByLabelText("Paste guest data"), { target: { value: "Name,Friend group,Department\nJane,Family,Finance\nSam,Friends,Sales" } });
+  await user.click(screen.getByRole("button", { name: "Review pasted data" }));
+  const dialog = await screen.findByRole("dialog", { name: "Review guest data" });
+  await user.click(within(dialog).getByRole("button", { name: "Use this guest list" }));
+  expect(screen.queryByLabelText("Seating purpose for Groups")).not.toBeInTheDocument();
+  await user.selectOptions(screen.getByLabelText("Seating purpose for Friend group"), "cluster");
+  await user.selectOptions(screen.getByLabelText("Seating purpose for Department"), "spread");
+  await user.click(screen.getByRole("button", { name: "Done" }));
+  fireEvent(window, new Event("pagehide"));
+  expect(saved().guestIds).toEqual(["jane", "sam"]);
+  expect(saved().seatPins).toEqual({ jane: 1 });
+  expect(saved().columns?.map(column => [column.label, column.mode])).toEqual([["Friend group", "cluster"], ["Department", "spread"]]);
+});
+
+it("organises existing combined labels into independently configurable columns with seats, pins and Undo intact", async () => {
+  const user = userEvent.setup();
+  const plan = { id: "kept", assignments: { 1: "jane", 2: "sam" }, holdingGuestIds: [] };
+  const preference = { id: "near", type: "prefer_adjacent" as const, guestAId: "jane", guestBId: "sam" };
+  const guestText = "Jane,University,Finance\nSam,School,Sales";
+  seed({ guestText, guestIds: ["jane", "sam"], columns: undefined, activePlan: plan, constraints: [preference], seatPins: { jane: 1 } });
+  render(<App />);
+  await user.click(screen.getByRole("button", { name: "1. Setup" }));
+  await user.click(screen.getByRole("button", { name: "Edit guests" }));
+  await user.click(screen.getByRole("button", { name: "Organise existing labels" }));
+  for (const [value, heading] of [["University", "Friend group"], ["School", "Friend group"], ["Finance", "Department"], ["Sales", "Department"]]) {
+    fireEvent.change(screen.getByLabelText(`Column heading for label ${value}`), { target: { value: heading } });
+  }
+  await user.click(screen.getByRole("button", { name: "Move labels into columns" }));
+  expect(screen.queryByLabelText("Seating purpose for Groups")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Seating purpose for Friend group")).toHaveValue("ignore");
+  await user.selectOptions(screen.getByLabelText("Seating purpose for Friend group"), "cluster");
+  await user.selectOptions(screen.getByLabelText("Seating purpose for Department"), "spread");
+  await user.click(screen.getByRole("button", { name: "Done" }));
+  fireEvent(window, new Event("pagehide"));
+  expect(saved().guestIds).toEqual(["jane", "sam"]);
+  expect(saved().activePlan).toEqual(plan);
+  expect(saved().constraints).toEqual([preference]);
+  expect(saved().seatPins).toEqual({ jane: 1 });
+  expect(saved().columns?.find(column => column.label === "Friend group")).toMatchObject({ mode: "cluster", values: { jane: ["University"], sam: ["School"] } });
+  expect(saved().columns?.find(column => column.label === "Department")).toMatchObject({ mode: "spread", values: { jane: ["Finance"], sam: ["Sales"] } });
+  await user.click(screen.getByRole("button", { name: "Undo" }));
+  fireEvent(window, new Event("pagehide"));
+  expect(saved().guestText).toBe(guestText);
+  expect(saved().columns).toHaveLength(1);
+  expect(saved().columns?.[0]).toMatchObject({ legacyGroups: true, values: { jane: ["University", "Finance"], sam: ["School", "Sales"] } });
+});
+
+it("takes an edited guest grid straight to its new table choices while preserving existing mappings", async () => {
+  const user = userEvent.setup();
+  seed({ ...initial, activePlan: null, constraints: [], columns: [{ id: "table", label: "Table group", mode: "table", values: { "guest-1-jane-smith": ["VIP"] }, tableMapping: { VIP: 1 } }] });
+  render(<App />);
+  await user.click(screen.getByRole("button", { name: "Edit guests" }));
+  fireEvent.change(screen.getByLabelText("Table group, row 2"), { target: { value: "Speakers" } });
+  await user.click(screen.getByRole("button", { name: "Done" }));
+  const choices = screen.getByRole("region", { name: "Choose tables for your guest groups" });
+  expect(choices).toBeVisible();
+  expect(choices).toHaveTextContent("1 group still needs a table");
+  expect(screen.getByLabelText("Table for Table group: Speakers")).toHaveFocus();
+  expect(screen.getByLabelText("Table for Table group: VIP")).toHaveValue("1");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Generate seating plans" })).toBeDisabled();
+  await user.selectOptions(screen.getByLabelText("Table for Table group: Speakers"), "2");
+  expect(screen.getByRole("region", { name: "Fixed table assignments" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Generate seating plans" })).toBeEnabled();
+  fireEvent(window, new Event("pagehide"));
+  expect(saved().columns?.[0].tableMapping).toEqual({ VIP: 1, Speakers: 2 });
+});
+
+it("treats missing table choices as setup, but still flags overcapacity after a choice", async () => {
+  const user = userEvent.setup();
+  seed({ guestText: "Jane\nSam", guestIds: ["jane", "sam"], activePlan: null, constraints: [], venueConfig: { tables: [{ id: 1, kind: "circular", seats: 1 }, { id: 2, kind: "circular", seats: 1 }] }, columns: [{ id: "table", label: "Table group", mode: "table", values: { jane: ["VIP"], sam: ["VIP"] }, tableMapping: {} }] });
+  render(<App />);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Choose tables for your guest groups" })).toBeVisible();
+  await user.selectOptions(screen.getByLabelText("Table for Table group: VIP"), "1");
+  expect(screen.getByRole("alert")).toHaveTextContent("2 fixed guests but only 1 seats");
+  expect(screen.getByRole("button", { name: "Generate seating plans" })).toBeDisabled();
 });

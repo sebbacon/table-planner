@@ -87,8 +87,8 @@ it("disables sharing until guest-list edits have been applied", async () => {
   const user = userEvent.setup();
   render(<App />);
   expect(screen.getByRole("button", { name: "Share plan" })).toBeDisabled();
-  await user.click(screen.getByRole("button", { name: "Paste or type names" }));
-  fireEvent.change(screen.getByLabelText("Guest list"), { target: { value: "New Guest" } });
+  await user.click(screen.getByRole("button", { name: "Add or paste guests" }));
+  fireEvent.change(screen.getByLabelText("Guest name, row 1"), { target: { value: "New Guest" } });
   expect(screen.getByRole("button", { name: "Share plan" })).toBeDisabled();
   await user.click(screen.getByRole("button", { name: "Done" }));
   expect(screen.getByRole("button", { name: "Share plan" })).toBeEnabled();

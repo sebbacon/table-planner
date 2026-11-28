@@ -34,14 +34,14 @@ export function parseGuestText(input: string, guestIds?: string[]): GuestParseRe
 
 // Match names before positions so inserting or reordering lines preserves identity.
 // Unmatched names at the same position in a same-length list are renames.
-export function reconcileGuestText(input: string, previous: Guest[]): GuestParseResult {
+export function reconcileGuestText(input: string, previous: Guest[], allowPositionalRenames = true): GuestParseResult {
   const result = parseGuestText(input);
   const available = [...previous];
   const ids = result.guests.map((guest) => {
     const index = available.findIndex((old) => old.name.toLocaleLowerCase() === guest.name.toLocaleLowerCase());
     return index < 0 ? undefined : available.splice(index, 1)[0].id;
   });
-  if (result.guests.length === previous.length) {
+  if (allowPositionalRenames && result.guests.length === previous.length) {
     if (available.length === 1) ids[ids.indexOf(undefined)] = available.pop()!.id;
     ids.forEach((id, index) => {
       if (id) return;
