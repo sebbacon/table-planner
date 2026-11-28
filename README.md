@@ -99,4 +99,14 @@ The local and hosted app have separate browser storage. Transfer a snapshot usin
 
 CRAP is `complexity² × (1 − coverage)³ + complexity`. Function coverage uses the fraction of executable statement-start lines covered inside each function, excluding nested functions. This is a line-based approximation. Scores of 30 or more are highlighted for review; metrics are informational.
 
+## Changing saved data
+
+Backups, browser sessions, and share-link payloads all use `createPersistedPlannerData` and the migration path in `src/domain/persistence.ts`. `PLANNER_DATA_VERSION` and the current wire type are selected in `persistenceSchema.ts`. These wire types describe published data independently of the working `PlannerData` model; the versioned parser projects both top-level and nested fields explicitly. Readers return the working model with legacy defaults already applied.
+
+For changes to persisted fields, enum meanings, or seat numbering, add a new wire schema and migration, retain the older parsers, and advance the central data version. Do not change the meaning of V2 fields in place. Preserve historical venue geometry when migrating plans with numbered seats. The local-storage key is a stable address: keep it unchanged when raising the data version so upgrades can find existing sessions. Only historical browser sessions may omit a version; unknown versions are rejected and local saving pauses to protect those sessions.
+
+Link encoding has its own version (`v1`, deflate plus URL-safe base64), independent of the contained data schema. Change it only when the envelope/encoding changes, and retain old decoders. A newer data schema inside a known encoding prompts the recipient to update the app.
+
+`src/domain/__fixtures__/` contains immutable V1/V2 backups, an unversioned session, and an original encoded share link. Keep these fixtures when extending the format, add an example for each new version, and test its migration alongside current round-trips. Run `npm run metrics:crap` before and after persistence changes and review affected functions for increases as well as new scores of 30 or more.
+
 Keep generated/local files out of git: `node_modules/`, `dist/`, `.venv/`, coverage reports, and exported planner data are ignored.

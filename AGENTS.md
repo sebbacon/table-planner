@@ -30,3 +30,9 @@
 - `PlannerData.seatPins` maps stable guest ids to exact seat ids; it is optional in version 1/2 backups and defaults to empty. Pins apply across generated alternatives and saved-plan loading.
 - Resolve pins together with fixed table assignments before generating, including conflicts, duplicate/missing seats, and combined table capacity. Seed pinned guests first and exclude pinned seats from every local-search/guided/kick swap.
 - Pin toggles appear on occupied seats in long/circular tables and both Plan views. Manual moves and plan loading must preserve every pin. Undo, reload, and backups retain pins; guest deletion prunes pins. Geometry changes explicitly clear pins because global seat numbering may change; table renames preserve them.
+
+## Persistence and Share Links
+- Backups, local sessions, and link payloads use the common serializer and migrations in `src/domain/persistence.ts`. Keep the storage key stable across data-version upgrades.
+- Published wire types in `persistenceSchema.ts` are independent of the working model. For persisted structure, enum-meaning, or seat-numbering changes, add a schema version and migration instead of changing existing wire semantics. Retain old parsers and historical default geometry.
+- The link encoding version is independent of the contained data version. Unknown data versions must be rejected without overwriting local sessions.
+- Keep `src/domain/__fixtures__/` immutable; add new fixtures for new versions. Compare CRAP scores before and after persistence changes, addressing new hotspots and increases in affected functions.

@@ -6,6 +6,7 @@ import { App } from "./App";
 import * as solver from "./domain/solver";
 import { readFileText } from "./domain/file";
 import type { PlannerData } from "./domain/backup";
+import { PLANNER_DATA_VERSION } from "./domain/persistence";
 
 const storageKey = "table-planner-state-v2";
 const initial: PlannerData = {
@@ -521,7 +522,7 @@ it.each([true, false, undefined])("migrates legacy group mixing (%s), preserving
   expect(saved().columns?.[0].values["guest-1-jane-smith"]).toEqual(["Family", "Younger"]);
   expect(saved().activePlan).toEqual(initial.activePlan);
   expect(saved().constraints).toEqual(initial.constraints);
-  expect(JSON.parse(localStorage.getItem(storageKey)!).version).toBe(2);
+  expect(JSON.parse(localStorage.getItem(storageKey)!).version).toBe(PLANNER_DATA_VERSION);
   await user.selectOptions(screen.getByLabelText("Use Groups for"), "spread");
   fireEvent(window, new Event("pagehide"));
   view.unmount();

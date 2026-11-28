@@ -4,9 +4,12 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { Blob as NodeBlob } from "node:buffer";
 import { TextEncoder } from "node:util";
+import { deflateSync } from "node:zlib";
 import { App } from "./App";
 import { createShareUrl, readShareHash } from "./domain/share";
 import type { PlannerData } from "./domain/backup";
+import { PLANNER_DATA_VERSION } from "./domain/persistence";
+import legacySession from "./domain/__fixtures__/session-unversioned.json";
 
 const key = "table-planner-state-v2";
 const local: PlannerData = { guestText: "Local Guest", guestIds: ["local"], constraints: [], activePlan: null };
@@ -105,4 +108,43 @@ it("opens a link navigated to in an existing tab and keeps subsequent edits on r
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Pin Shared Guest to seat 1" })).toBeInTheDocument();
   expect(JSON.parse(localStorage.getItem(key)!)).toMatchObject({ ...incoming, seatPins: {} });
+});
+
+it("upgrades an archived unversioned session through the common writer without losing legacy groups", () => {
+  localStorage.setItem(key, JSON.stringify(legacySession));
+  render(<App />);
+  fireEvent(window, new Event("pagehide"));
+  const stored = JSON.parse(localStorage.getItem(key)!);
+  expect(stored).toMatchObject({
+    version: PLANNER_DATA_VERSION,
+    guestText: legacySession.guestText,
+    guestIds: ["guest-1-jane", "guest-2-sam"],
+    activePlan: legacySession.activePlan,
+    mixGroups: true,
+    seatPins: {},
+    columns: [{ id: "legacy-groups", mode: "neighbours", legacyGroups: true,
+      values: { "guest-1-jane": ["Family", "Younger"], "guest-2-sam": ["Friends"] } }]
+  });
+  expect(stored).not.toHaveProperty("exportedAt");
+});
+
+it("protects a session from a future data version from automatic overwriting", async () => {
+  const futureSession = JSON.stringify({ ...incoming, version: 999, futureField: "keep this" });
+  localStorage.setItem(key, futureSession);
+  render(<App />);
+  expect(screen.getByRole("status")).toHaveTextContent("Local saving paused");
+  fireEvent(window, new Event("pagehide"));
+  await new Promise(resolve => setTimeout(resolve, 650));
+  expect(localStorage.getItem(key)).toBe(futureSession);
+});
+
+it("explains future-version links without replacing the local session", async () => {
+  localStorage.setItem(key, JSON.stringify(local));
+  const encoded = deflateSync(JSON.stringify({ ...incoming, version: 999 })).toString("base64url");
+  window.history.replaceState(null, "", `#plan=v1.${encoded}`);
+  render(<App />);
+  await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("unsupported data version. Update the app"));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  fireEvent(window, new Event("pagehide"));
+  expect(JSON.parse(localStorage.getItem(key)!)).toMatchObject(local);
 });

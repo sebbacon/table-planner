@@ -11,6 +11,8 @@ import { RoomLayout } from "./RoomLayout";
 import { AlertTriangle, Bookmark, ChevronDown, FileDown, FileUp, GripVertical, Loader, Pencil, Pin, PinOff, Plus, Printer, RefreshCw, Shuffle, Trash2, Upload, Users } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { createPlannerBackup, parsePlannerBackupJson, type PlannerData } from "./domain/backup";
+import { createPersistedPlannerData, parseLocalPlannerJson, PLANNER_STORAGE_KEY } from "./domain/persistence";
+import { restorePlannerDefaults } from "./domain/plannerData";
 import { analyzeConstraints, type ConstraintAnalysis } from "./domain/constraintAnalysis";
 import { readFileText } from "./domain/file";
 import { buildSeatingLayout } from "./domain/seating";
@@ -20,7 +22,6 @@ import { readGuestSpreadsheet, type SpreadsheetRow } from "./domain/spreadsheet"
 import { isHeadSeatConstraint, isPairConstraint, type Constraint, type HeadSeatConstraint, type PairConstraintType, type PairPreference, type PairPriority, type ConstraintPair, type Guest, type GuestColumn, type Plan, type SavedLayout, type ScoreBreakdown, type SeatingLayout, type SeatPins, type TableConfig, type VenueConfig } from "./domain/types";
 import { DEFAULT_VENUE_CONFIG, roomTableOrder } from "./domain/venueConfig";
 import { formatGuestLine, parseGuestText, reconcileGuestText } from "./domain/parser";
-const STORAGE_KEY = "table-planner-state-v2";
 const PLACEHOLDER_GUESTS = Array.from({
   length: 39
 }, (_, index) => {
@@ -73,12 +74,9 @@ export function App() {
   const fileMenuRef = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
+      const saved = localStorage.getItem(PLANNER_STORAGE_KEY);
       if (saved) {
-        const parsed = parsePlannerBackupJson(JSON.stringify({
-          version: 1,
-          ...JSON.parse(saved)
-        }));
+        const parsed = parseLocalPlannerJson(saved);
         restoreData(parsed);
         setPhase(parsed.activePlan ? "planning" : "setup");
         setNotice("Your previous session is ready.");
@@ -131,7 +129,7 @@ export function App() {
     };
     function persist() {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...state, version: 2 }));
+        localStorage.setItem(PLANNER_STORAGE_KEY, JSON.stringify(createPersistedPlannerData(state)));
         setSaveStatus(`Saved in this browser · ${new Date().toLocaleTimeString([], {
           hour: "2-digit",
           minute: "2-digit"
@@ -182,19 +180,19 @@ export function App() {
       candidates
     }]);
   }
-  function restoreData(data: PlannerData) {
+  function restoreData(input: PlannerData) {
+    const data = restorePlannerDefaults(input);
     setStorageBlocked(false);
     setGuestText(data.guestText);
-    setGuestIds(data.guestIds ?? parseGuestText(data.guestText).guests.map(guest => guest.id));
+    setGuestIds(data.guestIds);
     setGuestDraft(data.guestText);
     setConstraints(data.constraints);
     setActivePlan(data.activePlan);
-    setSavedLayouts(data.savedLayouts ?? []);
-    setVenueConfig(data.venueConfig ?? DEFAULT_VENUE_CONFIG);
-    setMixGroups(data.mixGroups ?? true);
-    setSeatPins(data.seatPins ?? {});
-    const restoredGuests = parseGuestText(data.guestText, data.guestIds).guests;
-    setColumns(data.columns ?? legacyGroupColumn(restoredGuests, data.mixGroups ?? true));
+    setSavedLayouts(data.savedLayouts);
+    setVenueConfig(data.venueConfig);
+    setMixGroups(data.mixGroups);
+    setSeatPins(data.seatPins);
+    setColumns(data.columns);
     setSelectedGuestId("");
     setTargetSeat("");
     setEditingTables(false);

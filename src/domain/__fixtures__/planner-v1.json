@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "exportedAt": "2026-05-27T12:00:00.000Z",
+  "guestText": "Jane, Family, Younger\nSam, Friends",
+  "constraints": [
+    { "id": "near", "type": "prefer_adjacent", "guestAId": "guest-1-jane", "guestBId": "guest-2-sam", "strength": "high" },
+    { "id": "head", "type": "prefer_head", "guestId": "guest-1-jane" }
+  ],
+  "activePlan": { "id": "old-plan", "assignments": { "39": "guest-1-jane", "20": null }, "holdingGuestIds": ["guest-2-sam"] }
+}
