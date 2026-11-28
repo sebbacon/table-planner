@@ -1,4 +1,5 @@
 import { GuestColumnsEditor } from "./GuestColumnsEditor";
+import { WelcomeDialog } from "./WelcomeDialog";
 import { SharePlanDialog } from "./SharePlanDialog";
 import { clearShareHash, createShareUrl, readShareHash } from "./domain/share";
 import { SpreadsheetImportDialog } from "./SpreadsheetImportDialog";
@@ -159,7 +160,7 @@ export function App() {
   const holdingGuestIds = guests.filter(guest => !seatedGuestIds.has(guest.id)).map(guest => guest.id);
   const hasTooManyGuests = guests.length > layout.seatIds.length;
   const hasSaveableData = Boolean(guestText.trim() || activePlan || savedLayouts.length || JSON.stringify(venueConfig) !== JSON.stringify(DEFAULT_VENUE_CONFIG));
-  const preferenceCount = validConstraints.length + columns.filter(column => column.mode !== "ignore").length;
+  const preferenceCount = validConstraints.length;
   const guestDraftChanged = isEditingGuests && guestDraft !== guestText;
   function currentData(): PlannerData {
     return {
@@ -468,6 +469,7 @@ export function App() {
         <p>{guests.length} guests for {layout.seatIds.length} seats</p>
       </div>
       <div className="top-actions">
+        <a className="help-link" href="./help.html" target="_blank" rel="noopener" aria-label="Help (opens in a new tab)">Help</a>
         <button type="button" onClick={undo} disabled={!history.length || isShuffling || guestDraftChanged}>Undo</button>
         <button type="button" onClick={handleShare} disabled={!ready || !hasSaveableData || guestDraftChanged || isShuffling || isSharing}>{isSharing ? "Creating link…" : "Share plan"}</button>
         <details className="file-menu" ref={fileMenuRef}>
@@ -546,10 +548,11 @@ export function App() {
           </button>}
           <label className="file-upload-button"><Upload size={16} /> Choose spreadsheet<input aria-label="Choose guest spreadsheet" className="visually-hidden" type="file" accept=".xlsx,.csv,.tsv,text/csv,text/tab-separated-values,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={handleSpreadsheetUpload} disabled={guestDraftChanged} /></label>
         </div>
-        <p className="muted-text">CSV or Excel. Read locally; never uploaded.</p>
+        <p className="muted-text">CSV, TSV or Excel. Read locally; never uploaded. Use headings such as Name, Household and Department, then choose how each column affects seating in the import preview.</p>
+        <p><a href="./sample-guests.csv" download>Download an example guest spreadsheet</a> · Household: keep together; Department: spread across tables; Friendship group: mix neighbours.</p>
         {isEditingGuests ? <div className="guest-editor">
           <label htmlFor="guest-list">One guest per line</label>
-          <p className="muted-text" id="guest-help">Optional group labels follow a comma, for example “Jane Smith, Family”. Existing names keep their seats when reordered. Replacing a name in a list of the same length renames that guest. For other renames, use the pencil beside a name in View guest list. Use Done to apply your changes.</p>
+          <p className="muted-text" id="guest-help">Optional group labels follow a comma, for example “Jane Smith, Family”. These all go into one Groups column with one shared seating purpose. For separate attributes with different purposes, import a spreadsheet with column headings. Existing names keep their seats when reordered. Replacing a name in a list of the same length renames that guest. For other renames, use the pencil beside a name in View guest list. Use Done to apply your changes.</p>
           <textarea id="guest-list" aria-label="Guest list" aria-describedby="guest-help" className="guest-input" value={guestDraft} onChange={event => setGuestDraft(event.target.value)} placeholder={"Jane Smith, Family\nSam Jones, Friends\nAlex Lee"} autoFocus />
           {parseGuestText(guestDraft).warnings.map(warning => <p className="warning-text" key={warning}>{warning}</p>)}
           <div className="inline-actions">
@@ -567,8 +570,14 @@ export function App() {
         {importWarnings.map(warning => <p className="warning-text" key={warning}>{warning}</p>)}
         {hasTooManyGuests && <p className="warning-text" role="alert">{guests.length - layout.seatIds.length} more guests than seats. Add seats or remove guests; extra guests will remain unseated.</p>}
       </section>
+      <GuestColumnsEditor columns={columns} guests={guests} layout={layout} disabled={!guests.length || guestDraftChanged} onChange={next => {
+        remember();
+        setColumns(next);
+        setCandidates([]);
+        setNotice("Column rules updated. Generate new options to use them.");
+      }} />
       <SeatPinsPanel seatPins={seatPins} guestsById={guestsById} layout={layout} onUnpin={removeSeatPin} />
-      {fixedTables.issues.length > 0 && <section className="panel-section fixed-table-issues" role="alert"><h2>Check fixed table assignments</h2><p>Resolve table mappings in Seating preferences → Rules from guest columns, or remove conflicting seat pins above, before generating.</p><ul>{fixedTables.issues.map(issue => <li key={issue}>{issue}</li>)}</ul></section>}
+      {fixedTables.issues.length > 0 && <section className="panel-section fixed-table-issues" role="alert"><h2>Check fixed table assignments</h2><p>Resolve table mappings in Rules from guest columns, or remove conflicting seat pins above, before generating.</p><ul>{fixedTables.issues.map(issue => <li key={issue}>{issue}</li>)}</ul></section>}
       <details className="panel-section preferences-disclosure">
         <summary><span className="step-label">Optional</span> Seating preferences <span className="muted-text">{preferenceCount ? `${preferenceCount} added` : "Who should sit near whom?"}</span></summary>
         <p>We’ll try to meet these preferences; some may conflict. You can generate a plan without any.</p>
@@ -577,12 +586,6 @@ export function App() {
           <PairEditor title="Seat near each other" type="prefer_adjacent" showPreference guests={guests} constraints={constraints} onChange={updateConstraints} />
           <PairEditor title="Keep apart" type="avoid_adjacent" guests={guests} constraints={constraints} onChange={updateConstraints} />
           {layout.headSeatIds.length > 0 && <HeadSeatEditor guests={guests} constraints={constraints} onChange={updateConstraints} />}
-          <GuestColumnsEditor columns={columns} guests={guests} layout={layout} onChange={next => {
-            remember();
-            setColumns(next);
-            setCandidates([]);
-            setNotice("Column rules updated. Generate new options to use them.");
-          }} />
         </fieldset>
         <ConstraintAnalysisPanel analysis={constraintAnalysis} guestsById={guestsById} onGuestHighlight={setHighlightedGuestId} />
       </details>
@@ -691,6 +694,7 @@ export function App() {
       }} />
       {!savedLayouts.length && <button type="button" onClick={() => setPhase(activePlan ? "planning" : "setup")}>{activePlan ? "Return to plan to keep a version" : "Start a seating plan"}</button>}
     </main>}
+    {ready && <WelcomeDialog suspended={Boolean(sharedPlan || pending || spreadsheetRows || shareUrl)} />}
     {spreadsheetRows && <SpreadsheetImportDialog rows={spreadsheetRows} onCancel={() => setSpreadsheetRows(null)} onImport={result => {
       applyGuests(result.guestText, true);
       setColumns(result.columns);
@@ -698,7 +702,7 @@ export function App() {
       setSpreadsheetRows(null);
       setImportWarnings(result.warnings);
       setPhase("setup");
-      setNotice(`Imported ${result.importedCount} guests and ${result.columns.length} columns. Choose how to use columns in Seating preferences.`);
+      setNotice(`Imported ${result.importedCount} guests and ${result.columns.length} columns. Review your column rules below; complete any fixed table mappings before generating.`);
     }} />}
     {shareUrl && <SharePlanDialog url={shareUrl} onClose={() => setShareUrl("")} />}
     {sharedPlan && <ReviewDialog title="Open shared plan?" description={`${parseGuestText(sharedPlan.guestText).guests.length} guests · ${sharedPlan.constraints.length} seating preferences. This replaces your current session, including saved versions. You can undo this change.`} confirm="Open shared plan" onCancel={() => {

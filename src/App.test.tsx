@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { App } from "./App";
+import { WELCOME_STORAGE_KEY } from "./WelcomeDialog";
 import * as solver from "./domain/solver";
 import { readFileText } from "./domain/file";
 import type { PlannerData } from "./domain/backup";
@@ -33,6 +34,7 @@ async function restoreBackup(user: ReturnType<typeof userEvent.setup>, data: Pla
 
 beforeEach(() => {
   localStorage.clear();
+  localStorage.setItem(WELCOME_STORAGE_KEY, "true");
   // jsdom doesn't implement the native dialog lifecycle/focus trap.
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
   HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
@@ -507,8 +509,7 @@ it("provides an explicit rename that preserves seats and preferences before inse
 
 async function openColumnRules(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("button", { name: "1. Setup" }));
-  await user.click(screen.getByText("Seating preferences", { selector: "summary" }));
-  await user.click(screen.getByText("Rules from guest columns", { selector: "h2" }));
+  await user.click(screen.getByText("Edit column rules", { selector: "summary" }));
 }
 
 it.each([true, false, undefined])("migrates legacy group mixing (%s), preserving labels, plans, and preferences across reload", async enabled => {
@@ -517,18 +518,18 @@ it.each([true, false, undefined])("migrates legacy group mixing (%s), preserving
   seed(data);
   const view = render(<App />);
   await openColumnRules(user);
-  expect(screen.getByLabelText("Use Groups for")).toHaveValue(enabled !== false ? "neighbours" : "ignore");
+  expect(screen.getByLabelText("Seating purpose for Groups")).toHaveValue(enabled !== false ? "neighbours" : "ignore");
   fireEvent(window, new Event("pagehide"));
   expect(saved().columns?.[0].values["guest-1-jane-smith"]).toEqual(["Family", "Younger"]);
   expect(saved().activePlan).toEqual(initial.activePlan);
   expect(saved().constraints).toEqual(initial.constraints);
   expect(JSON.parse(localStorage.getItem(storageKey)!).version).toBe(PLANNER_DATA_VERSION);
-  await user.selectOptions(screen.getByLabelText("Use Groups for"), "spread");
+  await user.selectOptions(screen.getByLabelText("Seating purpose for Groups"), "spread");
   fireEvent(window, new Event("pagehide"));
   view.unmount();
   render(<App />);
   await openColumnRules(user);
-  expect(screen.getByLabelText("Use Groups for")).toHaveValue("spread");
+  expect(screen.getByLabelText("Seating purpose for Groups")).toHaveValue("spread");
   expect(saved().activePlan).toEqual(initial.activePlan);
 });
 
@@ -543,8 +544,8 @@ it("previews arbitrary headers, selects names, skips columns, and activates only
   expect(within(dialog).queryByRole("columnheader", { name: "Notes" })).not.toBeInTheDocument();
   await user.click(within(dialog).getByRole("button", { name: "Use this guest list" }));
   await openColumnRules(user);
-  expect(screen.getByLabelText("Use Team for")).toHaveValue("ignore");
-  await user.selectOptions(screen.getByLabelText("Use Team for"), "cluster");
+  expect(screen.getByLabelText("Seating purpose for Team")).toHaveValue("ignore");
+  await user.selectOptions(screen.getByLabelText("Seating purpose for Team"), "cluster");
   fireEvent(window, new Event("pagehide"));
   expect(saved().guestText).toBe("Jane\nSam");
   expect(saved().columns).toHaveLength(1);
@@ -557,7 +558,7 @@ it("requires explicit table mapping, preserves it through renames, and requires 
   seed({ ...initial, activePlan: null, columns: [{ id: "table", label: "Table", mode: "ignore", values: { "guest-1-jane-smith": ["Table 1"] }, tableMapping: {} }] });
   render(<App />);
   await openColumnRules(user);
-  await user.selectOptions(screen.getByLabelText("Use Table for"), "table");
+  await user.selectOptions(screen.getByLabelText("Seating purpose for Table"), "table");
   expect(screen.getByRole("button", { name: "Generate seating plans" })).toBeDisabled();
   expect(screen.getByRole("alert")).toHaveTextContent("choose a table for “Table 1”");
   expect(screen.getByLabelText("Table for Table: Table 1")).toHaveValue("");
@@ -746,4 +747,35 @@ it("keeps the current plan if generation ever returns an option that violates a 
   fireEvent(window, new Event("pagehide"));
   expect(saved().activePlan).toEqual(initial.activePlan);
   expect(saved().seatPins).toEqual({ "guest-1-jane-smith": 1 });
+});
+
+it("imports independent column purposes and shows their summary outside seating preferences across reload", async () => {
+  const user = userEvent.setup();
+  const view = render(<App />);
+  await user.upload(screen.getByLabelText("Choose guest spreadsheet"), new File(["Name,Household,Department,Friendship group,Table,Notes\nJane,Smith,Finance,University,VIP,Private\nSam,Jones,Engineering,Running club,,Private"], "guests.csv", { type: "text/csv" }));
+  const dialog = await screen.findByRole("dialog", { name: "Review spreadsheet import" });
+  for (const [column, mode] of [["Household", "cluster"], ["Department", "spread"], ["Friendship group", "neighbours"], ["Table", "table"]]) {
+    await user.selectOptions(within(dialog).getByLabelText(`Seating purpose for ${column}`), mode);
+  }
+  await user.click(within(dialog).getByLabelText("Notes"));
+  await user.click(within(dialog).getByRole("button", { name: "Use this guest list" }));
+  const summary = screen.getByRole("list", { name: "Column rule summary" });
+  expect(summary).toBeVisible();
+  expect(screen.getByText("Seating preferences", { selector: "summary" })).toHaveTextContent("Who should sit near whom?");
+  expect(summary).toHaveTextContent("Household: Group at the same table");
+  expect(summary).toHaveTextContent("Department: Spread across tables");
+  expect(summary).toHaveTextContent("Friendship group: Mix neighbouring seats");
+  expect(summary).toHaveTextContent("Choose table mappings below");
+  expect(screen.getByRole("button", { name: "Generate seating plans" })).toBeDisabled();
+  await user.click(screen.getByText("Edit column rules", { selector: "summary" }));
+  await user.selectOptions(screen.getByLabelText("Table for Table: VIP"), "1");
+  expect(screen.getByRole("button", { name: "Generate seating plans" })).toBeEnabled();
+  fireEvent(window, new Event("pagehide"));
+  expect(saved().columns?.map(column => column.mode)).toEqual(["cluster", "spread", "neighbours", "table"]);
+  expect(JSON.stringify(saved())).not.toContain("Private");
+  view.unmount();
+  render(<App />);
+  expect(screen.getByRole("list", { name: "Column rule summary" })).toHaveTextContent("Department: Spread across tables");
+  await user.click(screen.getByText("Edit column rules", { selector: "summary" }));
+  expect(screen.getByLabelText("Table for Table: VIP")).toHaveValue("1");
 });

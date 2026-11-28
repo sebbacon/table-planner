@@ -77,6 +77,28 @@ p {
   min-height: 100vh;
 }
 
+.help-link {
+  color: inherit;
+  font-weight: 650;
+  padding: .55rem .75rem;
+  text-underline-offset: .2em;
+}
+
+.welcome-dialog {
+  width: min(38rem, calc(100vw - 2rem));
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.welcome-dialog ol {
+  padding-left: 1.4rem;
+  line-height: 1.55;
+}
+
+.welcome-dialog li + li {
+  margin-top: .75rem;
+}
+
 .top-bar {
   align-items: center;
   background: #24313d;
@@ -2082,4 +2104,31 @@ input[type="checkbox"] {
   .seat-pins-panel {
     display: none;
   }
+}
+
+.column-rule-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+.column-rule-summary {
+  padding-left: 1.25rem;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.import-column-purpose {
+  border-top: 1px solid #d5dfdc;
+  padding-top: .75rem;
+}
+
+.import-column-purpose label {
+  display: grid;
+  gap: .4rem;
+}
+
+.import-column-purpose select {
+  width: 100%;
 }

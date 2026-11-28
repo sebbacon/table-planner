@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Help · Table Planner</title>
+    <style>
+      :root { font-family: system-ui, sans-serif; color: #1d2329; background: #f5f2ec; line-height: 1.65; }
+      * { box-sizing: border-box; }
+      body { margin: 0; }
+      header { padding: 1rem max(1rem, calc((100% - 44rem) / 2)); background: #24313d; }
+      header a { color: white; font-weight: 650; }
+      main { max-width: 46rem; margin: 2rem auto; padding: clamp(1rem, 4vw, 2rem); background: white; border: 1px solid #d5dfdc; border-radius: .75rem; }
+      h1, h2 { line-height: 1.25; color: #24313d; }
+      h1 { font-size: 2rem; margin: 0 0 1rem; }
+      h2 { font-size: 1.35rem; margin: 2rem 0 .75rem; }
+      p { margin: .75rem 0; }
+      li { margin: .65rem 0; }
+      ol, ul { padding-left: 1.5rem; }
+      a { color: #116c70; text-underline-offset: .15em; }
+      a:focus-visible { outline: 3px solid #16838b; outline-offset: 4px; }
+      .example { border-left: 3px solid #16838b; padding: .25rem 1rem; background: #f5f8f6; }
+      @media print { body { background: white; } header { display: none; } main { margin: 0; border: 0; max-width: none; padding: 0; } }
+    </style>
+  </head>
+  <body>
+    <header><a href="./">Table Planner</a></header>
+    <main>
+      <h1>A good first draft, then your finishing touches</h1>
+      <p>Start with the few things that really matter. Generate some options, keep the parts you like, then arrange the rest by hand. You know your guests better than the planner does.</p>
+
+      <h2>Start with fewer rules</h2>
+      <p>For example, fix the wedding party to a top table and leave everyone else free. Then add one useful preference: keep friend groups at the same table, or spread departments across tables.</p>
+      <p>In a spreadsheet, use headings such as <strong>Name</strong>, <strong>Friend group</strong> and <strong>Department</strong>. Guests with matching values form a group within each column. Choose a purpose for each column in the import preview:</p>
+      <ul>
+        <li><strong>Group at the same table:</strong> try to keep each friend group together. Big groups may split.</li>
+        <li><strong>Spread across tables:</strong> aim for a similar mix of departments at each table, allowing for table sizes.</li>
+        <li><strong>Mix neighbouring seats:</strong> discourage guests from the same department from sitting beside each other.</li>
+        <li><strong>Table assignment:</strong> fix guests to tables you choose in Setup. For a top table, fill in only those guests’ cells; leave the rest blank.</li>
+      </ul>
+      <p>Each column has one purpose. Blank cells and columns set to <strong>Don’t use for seating</strong> have no effect. Labels typed after commas in the name list all share one <strong>Groups</strong> setting; use a spreadsheet for separate purposes.</p>
+
+      <h2>What wins when rules compete?</h2>
+      <p>The planner uses this order:</p>
+      <ol>
+        <li><strong>Pinned seats and fixed table assignments must be kept.</strong> Conflicting assignments must be resolved before generating.</li>
+        <li><strong>Individual preferences come next:</strong> who should sit near whom, who to keep apart, and end-seat preferences. High makes a pair preference count more than Normal, but cannot override a pin or fixed table.</li>
+        <li><strong>Keeping groups at the same table comes next.</strong></li>
+        <li><strong>Spreading across tables and mixing neighbours come last.</strong></li>
+      </ol>
+      <p>A better result higher up this list takes priority, even if it makes several preferences lower down worse. Apart from pins and fixed tables, these are things to try for, not promises.</p>
+      <div class="example">
+        <p><strong>Example:</strong> Priya belongs to the University friend group, but you also ask for her to sit next to Jo. The planner may split Priya from her friends to seat her beside Jo. If Priya is pinned at the top table, she stays there even if Jo is elsewhere.</p>
+      </div>
+      <p>It balances preferences across everyone, rather than finding each person’s ideal seat separately. If Priya has several “sit near” and “keep apart” preferences, they may compete too. More rules do not guarantee a better place for her. If a result surprises you, check pins and fixed tables first, then individual preferences, then column rules. Remove preferences that do not really matter.</p>
+
+      <h2>Keep the good bits and try again</h2>
+      <p>There is randomness in generation, so another run can give different options. Pin guests whose exact seats you want to keep, then choose <strong>Generate more options</strong> to rearrange the unpinned guests.</p>
+      <p>Expect to finish by hand: drag guests to move or swap them, or use the movement controls. Unpin someone before moving them; fixed table assignments still apply. Pin any new placements you want to keep before generating again.</p>
+
+      <h2>Keep a copy outside this browser</h2>
+      <p>Everything runs in your browser. Changes save automatically there, but do not sync to other browsers or devices. Clearing browser data removes that local copy. <strong>Saved plans</strong> are also only in this browser.</p>
+      <p><strong>Share plan</strong> creates a link containing a snapshot of your current plan and settings, without saved versions. Keep or send that link. After editing, create and copy a new link: the old one stays unchanged. Anyone with the link can read the included guest details.</p>
+      <p>For a file containing your work, including saved versions, choose <strong>Backup &amp; restore → Download backup</strong>. Download a fresh backup after further changes; use <strong>Restore backup</strong> to open it later.</p>
+    </main>
+  </body>
+</html>

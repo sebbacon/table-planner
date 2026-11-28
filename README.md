@@ -15,6 +15,8 @@ Open [http://localhost:5173/table-planner/](http://localhost:5173/table-planner/
 
 ## How to use
 
+A one-time welcome dialog introduces the workflow; dismissing it is remembered in this browser, separately from plan backups. The app’s **Help** link opens an [example-driven guide](public/help.html) to choosing rules, understanding their order of importance, refining a plan and keeping a copy.
+
 ### 1. Setup
 
 **Check your tables.** Use the default 39-seat layout or choose **Change tables**. Add long or circular tables, set seat counts, and optionally enable end seats on long tables. Choose **Use these tables** to apply. Changing seating geometry clears current and saved plans after a review; guests and preferences are kept. Renaming tables preserves plans. Unchanged tables leave everything intact.
@@ -32,15 +34,18 @@ Alex Lee, Friends, Younger
 Pat Morgan
 ```
 
-**Choose spreadsheet** reads CSV, TSV, or Excel files locally. Preview the names and other columns before accepting. Confirm whether the first row contains headings, choose one or two name columns, and uncheck any columns you do not want to import. All imported columns start with no seating effect. Importing a spreadsheet replaces guests and clears preferences and current/saved plans; it can be undone. **Try an example** provides sample guests when the list is empty.
+**Choose spreadsheet** reads CSV, TSV, or Excel files locally. Preview the names and other columns before accepting. Confirm whether the first row contains headings, choose one or two name columns, and uncheck any columns you do not want to import. Use meaningful headings such as Household, Department and Friendship group. Each column starts with no seating effect; choose its purpose directly in the import preview. For example, keep households together, spread departments across tables and mix friendship groups in neighbouring seats. Download the example spreadsheet beside the upload button to see the format. Importing a spreadsheet replaces guests and clears preferences and current/saved plans; it can be undone. **Try an example** provides sample guests when the list is empty.
+
+**Rules from guest columns** has a visible Setup summary showing every column’s purpose. Choose **Edit column rules** to change purposes, view values and guests, or complete fixed table mappings. Blank cells have no effect. Each column has one purpose. Comma-separated labels entered after guest names all belong to one Groups column; their positions do not create separate attributes. Use a spreadsheet for attributes with different purposes.
 
 **Seating preferences** is optional. Each preference group is collapsible and starts collapsed, with its count visible:
 
 - **Seat near each other:** choose **Sit next to each other**, **Sit where they can chat**, or **Share a table**. Chatting includes neighbours, opposite seats and diagonals on long tables, or neighbours and next-but-one on circular tables. Sharing a table gives equal credit anywhere at that table. Choose **Normal** or **High** priority independently; High doubles the scoring weight without changing which seats qualify. Expand **How seating preferences work** for illustrated examples.
 - **Keep apart:** prefer separate tables. On long tables, the penalty fades quickly with distance in seat spacings, leaving only a small penalty several seats away. On circular tables, the shared-table penalty stays constant at every distance. The review panel flags pairs still sharing a table, even when seated far apart. Room-canvas positions do not affect distance scoring.
 - **End-seat preferences:** prefer or avoid end seats on long tables. These controls appear when the venue has end seats.
-- **Rules from guest columns:** choose a purpose for each imported column: **Don’t use for seating**, **Spread across tables**, **Group at the same table**, **Mix neighbouring seats**, or **Table assignment**. Spreading accounts for table capacities and overall group proportions. Clustering prefers matching values at the same table; large groups can span several tables. Blank cells are unspecified. Same-table grouping takes priority over spreading and neighbour mixing. All column preferences come after individual seating preference scores. Rules within each tier have equal importance.
-- **Table assignment:** map each nonblank spreadsheet value (for example, “A” or “VIP”) to a table explicitly. Matching names provide suggestions for you to accept. Links use stable table identities, so renaming a table preserves assignments. Removing a table requires remapping its values; newly added tables never reuse removed identities. Missing mappings, conflicting assignments, and overfilled tables block generation. Manual moves and saved-plan loading cannot create new violations of fixed assignments.
+**Column rule purposes:** choose a purpose for each imported column: **Don’t use for seating**, **Spread across tables**, **Group at the same table**, **Mix neighbouring seats**, or **Table assignment**. Spreading accounts for table capacities and overall group proportions. Clustering prefers matching values at the same table; large groups can span several tables. Blank cells are unspecified. Same-table grouping takes priority over spreading and neighbour mixing. All column preferences come after individual seating preference scores. Rules within each tier have equal importance.
+
+**Table assignment:** map each nonblank spreadsheet value (for example, “A” or “VIP”) to a table explicitly. Matching names provide suggestions for you to accept. Links use stable table identities, so renaming a table preserves assignments. Removing a table requires remapping its values; newly added tables never reuse removed identities. Missing mappings, conflicting assignments, and overfilled tables block generation. Manual moves and saved-plan loading cannot create new violations of fixed assignments.
 
 Older backups map “Neighbours” to next-to with High priority, and “Neighbours or opposite” / “Anywhere nearby” to chatting with Normal priority. Explicit new preference and priority fields take precedence over legacy fields.
 
