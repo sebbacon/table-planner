@@ -144,3 +144,105 @@ it("retains the shared-table penalty when only one circular table is available",
   const [best] = generatePlans({ guests, constraints: [{ id: "apart", type: "avoid_adjacent", guestAId: "g0", guestBId: "g1" }], layout, attempts: 6, improveIterations: 100, rng: seededRandom(17) });
   expect(best.score.avoided[0]).toMatchObject({ adjacent: true, points: -50 });
 });
+
+it.each([1, 17, 99])("keeps fixed guests at their tables during initial placement, guided swaps, and random kicks (seed %i)", seed => {
+  const layout = buildSeatingLayout({ tables: [{ id: 0, kind: "circular", seats: 3 }, { id: 9, kind: "rect", seatsPerSide: 2, leftEnd: true, rightEnd: true }] });
+  const guests = Array.from({ length: 12 }, (_, index) => ({ id: `g${index}`, name: `Guest ${index}`, groups: [] }));
+  // Fixed guests occur after the normal overflow cutoff and fill a table more
+  // heavily than the proportional occupancy target would have done.
+  const columns = [{ id: "table", label: "Table", mode: "table" as const, values: { g9: ["A"], g10: ["A"], g11: ["A"], g8: ["B"] }, tableMapping: { A: 0, B: 9 } }];
+  const constraints: Constraint[] = [{ id: "cross", type: "prefer_adjacent", guestAId: "g9", guestBId: "g8", preference: "same_table", priority: "high" }];
+  for (const improveIterations of [0, 300]) {
+    const candidates = generatePlans({ guests, constraints, layout, columns, attempts: 4, count: 4, improveIterations, rng: seededRandom(seed) });
+    for (const { plan } of candidates) {
+      const seated = Object.values(plan.assignments).filter(Boolean);
+      expect([...seated, ...plan.holdingGuestIds].sort()).toEqual(guests.map(guest => guest.id).sort());
+      for (const [id, tableId] of [["g9", 0], ["g10", 0], ["g11", 0], ["g8", 9]] as const) {
+        const seat = layout.seats.find(seat => plan.assignments[seat.id] === id);
+        expect(seat?.tableId).toBe(tableId);
+        expect(plan.holdingGuestIds).not.toContain(id);
+      }
+    }
+  }
+});
+
+it("rejects unresolved and overcapacity fixed assignments instead of returning a compromise", () => {
+  const layout = buildSeatingLayout({ tables: [{ id: 1, kind: "circular", seats: 3 }] });
+  const guests = Array.from({ length: 4 }, (_, i) => ({ id: `g${i}`, name: `Guest ${i}`, groups: [] }));
+  const rule = { id: "table", label: "Table", mode: "table" as const, values: Object.fromEntries(guests.map(guest => [guest.id, ["A"]])), tableMapping: {} };
+  expect(() => generatePlans({ guests, constraints: [], layout, columns: [rule] })).toThrow("choose a table");
+  expect(() => generatePlans({ guests, constraints: [], layout, columns: [{ ...rule, tableMapping: { A: 1 } }] })).toThrow("4 fixed guests but only 3 seats");
+});
+
+it.each([1, 17, 99])("retains the best individual score while searching with many conflicting column rules (seed %i)", seed => {
+  const layout = buildSeatingLayout({ tables: [1, 2].map(id => ({ id, kind: "circular" as const, seats: 3 })) });
+  const guests = ["a", "b", "c", "d", "e", "f"].map(id => ({ id, name: id, groups: [] }));
+  const constraints: Constraint[] = [{ id: "together", type: "prefer_adjacent", guestAId: "a", guestBId: "b", preference: "same_table" }];
+  const columns = Array.from({ length: 300 }, (_, i) => ({ id: `col${i}`, label: `Col ${i}`, mode: "spread" as const, values: { a: ["X"], b: ["X"] }, tableMapping: {} }));
+  const options = { guests, constraints, columns, layout, attempts: 1, count: 1 };
+  const [initial] = generatePlans({ ...options, improveIterations: 0, rng: seededRandom(seed) });
+  const [improved] = generatePlans({ ...options, improveIterations: 100, rng: seededRandom(seed) });
+  expect(initial.score.preferred[0].adjacent).toBe(true);
+  expect(improved.score.preferred[0].adjacent).toBe(true);
+  expect(improved.score.constraintPoints).toBeGreaterThanOrEqual(initial.score.constraintPoints);
+});
+
+it("allows fixed guests to exceed proportional occupancy targets within actual table capacity", () => {
+  const layout = buildSeatingLayout({ tables: [{ id: 0, kind: "circular", seats: 3 }, { id: 1, kind: "circular", seats: 9 }] });
+  const guests = ["a", "b", "c"].map(id => ({ id, name: id, groups: [] }));
+  const columns = [{ id: "table", label: "Table", mode: "table" as const, values: Object.fromEntries(guests.map(guest => [guest.id, ["Small"]])), tableMapping: { Small: 0 } }];
+  for (const { plan } of generatePlans({ guests, constraints: [], columns, layout, attempts: 3, improveIterations: 60, rng: seededRandom(1) })) {
+    expect(layout.seats.filter(seat => seat.tableId === 0).map(seat => plan.assignments[seat.id]).sort()).toEqual(["a", "b", "c"]);
+    expect(plan.holdingGuestIds).toEqual([]);
+  }
+});
+
+it("favours same-table column grouping over conflicting spread rules during search and ranking", () => {
+  const layout = buildSeatingLayout({ tables: [1, 2].map(id => ({ id, kind: "circular" as const, seats: 3 })) });
+  const guests = Array.from({ length: 6 }, (_, i) => ({ id: `g${i}`, name: `Guest ${i}`, groups: [] }));
+  const values = Object.fromEntries(guests.map((guest, i) => [guest.id, [i < 3 ? "X" : "Y"]]));
+  const columns = [
+    { id: "household", label: "Household", mode: "cluster" as const, values, tableMapping: {} },
+    ...Array.from({ length: 20 }, (_, i) => ({ id: `mix${i}`, label: `Mix ${i}`, mode: "spread" as const, values, tableMapping: {} }))
+  ];
+  const [best] = generatePlans({ guests, constraints: [], columns, layout, attempts: 5, improveIterations: 120, rng: seededRandom(17) });
+  expect(best.score.clusterPoints).toBe(1);
+  for (const tableId of layout.tableIds) {
+    const tableValues = layout.seats.filter(seat => seat.tableId === tableId).flatMap(seat => values[best.plan.assignments[seat.id]!]);
+    expect(new Set(tableValues).size).toBe(1);
+  }
+});
+
+it.each([1, 17, 99])("keeps exact pinned seats through placement, guided search, and random kicks (seed %i)", seed => {
+  const layout = buildSeatingLayout({ tables: [
+    { id: 1, kind: "rect", seatsPerSide: 2, leftEnd: true, rightEnd: true },
+    { id: 2, kind: "circular", seats: 3 }
+  ] });
+  const guests = Array.from({ length: 12 }, (_, i) => ({ id: `g${i}`, name: `Guest ${i}`, groups: [] }));
+  const seatPins = { g11: layout.seatIds[0], g10: layout.seatIds[7] };
+  const constraints: Constraint[] = [
+    { id: "cross", type: "prefer_adjacent", guestAId: "g10", guestBId: "g11", preference: "same_table", priority: "high" },
+    { id: "head", type: "prefer_head", guestId: "g11" }
+  ];
+  for (const improveIterations of [0, 350]) {
+    for (const { plan } of generatePlans({ guests, constraints, layout, seatPins, attempts: 4, improveIterations, rng: seededRandom(seed) })) {
+      for (const [id, seat] of Object.entries(seatPins)) expect(plan.assignments[seat]).toBe(id);
+      expect([...Object.values(plan.assignments).filter(Boolean), ...plan.holdingGuestIds].sort()).toEqual(guests.map(guest => guest.id).sort());
+    }
+  }
+});
+
+it("supports all seats pinned and rejects duplicate, missing, conflicting, or overcapacity locks", () => {
+  const layout = buildSeatingLayout({ tables: [1, 2].map(id => ({ id, kind: "circular" as const, seats: 3 })) });
+  const guests = Array.from({ length: 6 }, (_, i) => ({ id: `g${i}`, name: `Guest ${i}`, groups: [] }));
+  const seatPins = Object.fromEntries(guests.map((guest, i) => [guest.id, layout.seatIds[i]]));
+  const [result] = generatePlans({ guests, constraints: [], layout, seatPins, attempts: 2, improveIterations: 120 });
+  for (const [id, seat] of Object.entries(seatPins)) expect(result.plan.assignments[seat]).toBe(id);
+  const options = { guests, constraints: [], layout, attempts: 1, improveIterations: 0 };
+  expect(() => generatePlans({ ...options, seatPins: { g0: 1, g1: 1 } })).toThrow("more than one pinned guest");
+  expect(() => generatePlans({ ...options, seatPins: { g0: 999 } })).toThrow("unavailable guest or seat");
+  expect(() => generatePlans({ ...options, seatPins: { missing: 1 } })).toThrow("unavailable guest or seat");
+  const column = { id: "table", label: "Table", mode: "table" as const, values: { g0: ["A"], g1: ["A"], g2: ["A"], g3: ["A"] }, tableMapping: { A: 2 } };
+  expect(() => generatePlans({ ...options, columns: [column], seatPins: { g0: 1 } })).toThrow("different table");
+  expect(() => generatePlans({ ...options, columns: [{ ...column, values: { g0: ["A"], g1: ["A"], g2: ["A"] } }], seatPins: { g3: 4 } })).toThrow("4 fixed guests but only 3 seats");
+});

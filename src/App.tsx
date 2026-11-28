@@ -1,21 +1,27 @@
+import { GuestColumnsEditor } from "./GuestColumnsEditor";
+import { SharePlanDialog } from "./SharePlanDialog";
+import { clearShareHash, createShareUrl, readShareHash } from "./domain/share";
+import { SpreadsheetImportDialog } from "./SpreadsheetImportDialog";
+import { legacyGroupColumn, reconcileColumns, resolveTableAssignments, seatPinViolations, tableAssignmentViolations } from "./domain/guestColumns";
 import { PreferenceGuide } from "./PreferenceGuide";
 import { getPairPreference, getPairPriority, PREFERENCE_LABELS } from "./domain/pairPreferences";
 import { roomPlanGeometry } from "./domain/roomPlan";
 import { PlanViewport } from "./PlanViewport";
 import { RoomLayout } from "./RoomLayout";
-import { AlertTriangle, Bookmark, ChevronDown, FileDown, FileUp, GripVertical, Loader, Pencil, Plus, Printer, RefreshCw, Shuffle, Trash2, Upload, Users } from "lucide-react";
+import { AlertTriangle, Bookmark, ChevronDown, FileDown, FileUp, GripVertical, Loader, Pencil, Pin, PinOff, Plus, Printer, RefreshCw, Shuffle, Trash2, Upload, Users } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { createPlannerBackup, parsePlannerBackupJson, type PlannerData } from "./domain/backup";
+import { createPersistedPlannerData, parseLocalPlannerJson, PLANNER_STORAGE_KEY } from "./domain/persistence";
+import { restorePlannerDefaults } from "./domain/plannerData";
 import { analyzeConstraints, type ConstraintAnalysis } from "./domain/constraintAnalysis";
 import { readFileText } from "./domain/file";
 import { buildSeatingLayout } from "./domain/seating";
 import { createInitialPlan, scorePlan } from "./domain/scoring";
 import { DEFAULT_EFFORT, EFFORT_LEVELS, generatePlans, type ScoredPlan } from "./domain/solver";
-import { spreadsheetFileToGuestText } from "./domain/spreadsheet";
-import { isHeadSeatConstraint, isPairConstraint, type Constraint, type HeadSeatConstraint, type PairConstraintType, type PairPreference, type PairPriority, type ConstraintPair, type Guest, type Plan, type SavedLayout, type ScoreBreakdown, type SeatingLayout, type TableConfig, type VenueConfig } from "./domain/types";
+import { readGuestSpreadsheet, type SpreadsheetRow } from "./domain/spreadsheet";
+import { isHeadSeatConstraint, isPairConstraint, type Constraint, type HeadSeatConstraint, type PairConstraintType, type PairPreference, type PairPriority, type ConstraintPair, type Guest, type GuestColumn, type Plan, type SavedLayout, type ScoreBreakdown, type SeatingLayout, type SeatPins, type TableConfig, type VenueConfig } from "./domain/types";
 import { DEFAULT_VENUE_CONFIG, roomTableOrder } from "./domain/venueConfig";
-import { parseGuestText, reconcileGuestText } from "./domain/parser";
-const STORAGE_KEY = "table-planner-state-v2";
+import { formatGuestLine, parseGuestText, reconcileGuestText } from "./domain/parser";
 const PLACEHOLDER_GUESTS = Array.from({
   length: 39
 }, (_, index) => {
@@ -43,11 +49,17 @@ export function App() {
   const [savedLayouts, setSavedLayouts] = useState<SavedLayout[]>([]);
   const [venueConfig, setVenueConfig] = useState<VenueConfig>(DEFAULT_VENUE_CONFIG);
   const [mixGroups, setMixGroups] = useState(false);
+  const [seatPins, setSeatPins] = useState<SeatPins>({});
+  const [columns, setColumns] = useState<GuestColumn[]>([]);
+  const [spreadsheetRows, setSpreadsheetRows] = useState<SpreadsheetRow[] | null>(null);
   const [roomView, setRoomView] = useState(false);
   const [phase, setPhase] = useState<"setup" | "planning" | "saved">("setup");
   const [editingTables, setEditingTables] = useState(false);
   const [ready, setReady] = useState(false);
   const [storageBlocked, setStorageBlocked] = useState(false);
+  const [shareUrl, setShareUrl] = useState("");
+  const [isSharing, setIsSharing] = useState(false);
+  const [sharedPlan, setSharedPlan] = useState<PlannerData | null>(null);
   const [history, setHistory] = useState<{
     data: PlannerData;
     candidates: ScoredPlan[];
@@ -62,12 +74,9 @@ export function App() {
   const fileMenuRef = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
+      const saved = localStorage.getItem(PLANNER_STORAGE_KEY);
       if (saved) {
-        const parsed = parsePlannerBackupJson(JSON.stringify({
-          ...JSON.parse(saved),
-          version: 1
-        }));
+        const parsed = parseLocalPlannerJson(saved);
         restoreData(parsed);
         setPhase(parsed.activePlan ? "planning" : "setup");
         setNotice("Your previous session is ready.");
@@ -78,6 +87,26 @@ export function App() {
       setImportError("Your saved session could not be loaded. Restore a backup, or start fresh. The unreadable session has not been overwritten.");
     }
     setReady(true);
+  }, []);
+  useEffect(() => {
+    let request = 0;
+    function loadSharedPlan() {
+      const current = ++request;
+      readShareHash(window.location.hash).then(data => {
+        if (current === request) setSharedPlan(data);
+      }).catch(error => {
+        if (current === request) {
+          setSharedPlan(null);
+          setImportError(error instanceof Error ? error.message : "This share link could not be opened.");
+        }
+      });
+    }
+    loadSharedPlan();
+    window.addEventListener("hashchange", loadSharedPlan);
+    return () => {
+      request++;
+      window.removeEventListener("hashchange", loadSharedPlan);
+    };
   }, []);
   const parseResult = useMemo(() => parseGuestText(guestText, guestIds), [guestText, guestIds]);
   const guests = parseResult.guests;
@@ -94,11 +123,13 @@ export function App() {
       activePlan,
       savedLayouts,
       venueConfig,
-      mixGroups
+      mixGroups,
+      columns,
+      seatPins
     };
     function persist() {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        localStorage.setItem(PLANNER_STORAGE_KEY, JSON.stringify(createPersistedPlannerData(state)));
         setSaveStatus(`Saved in this browser · ${new Date().toLocaleTimeString([], {
           hour: "2-digit",
           minute: "2-digit"
@@ -119,13 +150,16 @@ export function App() {
       window.removeEventListener("pagehide", persist);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [ready, storageBlocked, guestText, guestIds, validConstraints, activePlan, savedLayouts, venueConfig, mixGroups]);
-  const activeScore = useMemo(() => activePlan ? scorePlan(activePlan, guests, validConstraints, layout, mixGroups) : null, [activePlan, guests, validConstraints, layout, mixGroups]);
+  }, [ready, storageBlocked, guestText, guestIds, validConstraints, activePlan, savedLayouts, venueConfig, mixGroups, columns, seatPins]);
+  const activeScore = useMemo(() => activePlan ? scorePlan(activePlan, guests, validConstraints, layout, false, columns) : null, [activePlan, guests, validConstraints, layout, columns]);
   const constraintAnalysis = useMemo(() => analyzeConstraints(guests, validConstraints, layout), [guests, validConstraints, layout]);
+  const fixedTables = useMemo(() => resolveTableAssignments(columns, guests, layout, seatPins), [columns, guests, layout, seatPins]);
+  const fixedPlanIssues = useMemo(() => activePlan ? [...seatPinViolations(activePlan, seatPins, guests), ...tableAssignmentViolations(activePlan, fixedTables.assignments, guests, layout)] : [], [activePlan, seatPins, fixedTables, guests, layout]);
   const seatedGuestIds = new Set(Object.values(activePlan?.assignments ?? {}).filter(Boolean));
   const holdingGuestIds = guests.filter(guest => !seatedGuestIds.has(guest.id)).map(guest => guest.id);
   const hasTooManyGuests = guests.length > layout.seatIds.length;
   const hasSaveableData = Boolean(guestText.trim() || activePlan || savedLayouts.length || JSON.stringify(venueConfig) !== JSON.stringify(DEFAULT_VENUE_CONFIG));
+  const preferenceCount = validConstraints.length + columns.filter(column => column.mode !== "ignore").length;
   const guestDraftChanged = isEditingGuests && guestDraft !== guestText;
   function currentData(): PlannerData {
     return {
@@ -135,7 +169,9 @@ export function App() {
       activePlan,
       savedLayouts,
       venueConfig,
-      mixGroups
+      mixGroups,
+      columns,
+      seatPins
     };
   }
   function remember() {
@@ -144,16 +180,19 @@ export function App() {
       candidates
     }]);
   }
-  function restoreData(data: PlannerData) {
+  function restoreData(input: PlannerData) {
+    const data = restorePlannerDefaults(input);
     setStorageBlocked(false);
     setGuestText(data.guestText);
-    setGuestIds(data.guestIds ?? parseGuestText(data.guestText).guests.map(guest => guest.id));
+    setGuestIds(data.guestIds);
     setGuestDraft(data.guestText);
     setConstraints(data.constraints);
     setActivePlan(data.activePlan);
-    setSavedLayouts(data.savedLayouts ?? []);
-    setVenueConfig(data.venueConfig ?? DEFAULT_VENUE_CONFIG);
-    setMixGroups(data.mixGroups ?? true);
+    setSavedLayouts(data.savedLayouts);
+    setVenueConfig(data.venueConfig);
+    setMixGroups(data.mixGroups);
+    setSeatPins(data.seatPins);
+    setColumns(data.columns);
     setSelectedGuestId("");
     setTargetSeat("");
     setEditingTables(false);
@@ -183,6 +222,10 @@ export function App() {
       return;
     }
     remember();
+    const nextColumns = replace ? [] : reconcileColumns(columns, parsed.guests);
+    if (!nextColumns.some(column => column.legacyGroups)) nextColumns.push(...legacyGroupColumn(parsed.guests, mixGroups));
+    setColumns(nextColumns);
+    setSeatPins(replace ? {} : Object.fromEntries(Object.entries(seatPins).filter(([id]) => ids.has(id))));
     setGuestText(text);
     setGuestIds(parsed.guests.map(guest => guest.id));
     setGuestDraft(text);
@@ -205,7 +248,7 @@ export function App() {
     setNotice(`${parsed.guests.length} guests ready.${replace ? "" : removedPreferences ? ` ${removedPreferences} preferences removed for guests no longer on the list. Undo restores them.` : " Existing guests keep their seats and preferences."}`);
   }
   function renameGuest(id: string, name: string) {
-    const text = guests.map(guest => [guest.id === id ? name : guest.name, ...guest.groups].join(", ")).join("\n");
+    const text = guests.map(guest => formatGuestLine(guest.id === id ? name : guest.name, guest.groups)).join("\n");
     applyGuests(text, false, guests.map(guest => guest.id));
   }
   function startEditingGuests() {
@@ -217,19 +260,7 @@ export function App() {
     event.target.value = "";
     if (!file) return;
     try {
-      const result = await spreadsheetFileToGuestText(file);
-      setPending({
-        title: `Import ${result.importedCount} guests?`,
-        description: "This replaces your guest list and clears seating preferences, the current plan, and saved versions. You can undo this change.",
-        preview: result.guestText + (result.warnings.length ? `\n\n${result.warnings.join("\n")}` : ""),
-        confirm: "Use this guest list",
-        apply: () => {
-          applyGuests(result.guestText, true);
-          setImportWarnings(result.warnings);
-          setPhase("setup");
-          setNotice(`Imported ${result.importedCount} guests.`);
-        }
-      });
+      setSpreadsheetRows(await readGuestSpreadsheet(file));
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "The spreadsheet could not be read.");
     }
@@ -275,8 +306,18 @@ export function App() {
     setNotice("Backup downloaded. Keep it to restore your work in another browser or device.");
     if (fileMenuRef.current) fileMenuRef.current.open = false;
   }
+  async function handleShare() {
+    setIsSharing(true);
+    try {
+      setShareUrl(await createShareUrl(currentData(), window.location.href));
+    } catch (error) {
+      setImportError(error instanceof Error ? error.message : "Could not create a share link. Download a backup instead.");
+    } finally {
+      setIsSharing(false);
+    }
+  }
   async function handleShuffle() {
-    if (!guests.length || isShuffling) return;
+    if (!guests.length || isShuffling || fixedTables.issues.length) return;
     setIsShuffling(true);
     await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     try {
@@ -291,7 +332,9 @@ export function App() {
         count: 6,
         attempts,
         improveIterations,
-        mixGroups
+        mixGroups: false,
+        columns,
+        seatPins
       }).map(candidate => ({
         ...candidate,
         plan: {
@@ -300,6 +343,9 @@ export function App() {
         }
       }));
       if (!next.length) throw new Error("No seating options were found. Check your table setup and try again.");
+      if (next.some(candidate => seatPinViolations(candidate.plan, seatPins, guests).length > 0)) {
+        throw new Error("Generated options did not preserve every pinned seat. Your current plan has been kept. Please try again.");
+      }
       remember();
       setCandidates(next);
       setActivePlan(clonePlan(next[0].plan));
@@ -312,11 +358,41 @@ export function App() {
     }
   }
   function applyPlan(plan: Plan, message: string) {
+    const pinIssue = seatPinViolations(plan, seatPins, guests)[0];
+    if (pinIssue) {
+      setImportError(pinIssue);
+      return;
+    }
+    const nextIssues = tableAssignmentViolations(plan, fixedTables.assignments, guests, layout);
+    if (fixedTables.issues.length || nextIssues.some(issue => !fixedPlanIssues.includes(issue))) {
+      setImportError(fixedTables.issues[0] ?? nextIssues.find(issue => !fixedPlanIssues.includes(issue)) ?? "Check fixed table assignments in Setup.");
+      return;
+    }
     remember();
     setActivePlan(clonePlan(plan));
     setSelectedGuestId("");
     setTargetSeat("");
     setNotice(message);
+  }
+  function toggleSeatPin(guestId: string, seatId: number) {
+    if (!activePlan || isShuffling || activePlan.assignments[seatId] !== guestId) return;
+    const next = { ...seatPins };
+    const wasPinned = Object.hasOwn(next, guestId);
+    if (wasPinned) delete next[guestId];
+    else next[guestId] = seatId;
+    remember();
+    setSeatPins(next);
+    setCandidates([]);
+    setImportError("");
+    setNotice(wasPinned ? `${guestsById.get(guestId)?.name} unpinned.` : `${guestsById.get(guestId)?.name} pinned to seat ${seatId}. New plans will keep this seat.`);
+  }
+  function removeSeatPin(guestId: string) {
+    if (isShuffling || guestDraftChanged) return;
+    remember();
+    setSeatPins(Object.fromEntries(Object.entries(seatPins).filter(([id]) => id !== guestId)));
+    setCandidates([]);
+    setImportError("");
+    setNotice("Seat pin removed. You can undo this change.");
   }
   function moveGuest(guestId: string, seatId: number) {
     if (!activePlan || !guestsById.has(guestId) || !layout.seatsById.has(seatId)) return;
@@ -345,6 +421,8 @@ export function App() {
     const apply = () => {
       remember();
       setVenueConfig(next);
+      setColumns(columns.map(column => ({ ...column, tableMapping: Object.fromEntries(Object.entries(column.tableMapping).map(([value, id]) => [value, next.tables.some(table => table.id === id) ? id : null])) })));
+      setSeatPins({});
       setActivePlan(null);
       setSavedLayouts([]);
       setCandidates([]);
@@ -354,7 +432,7 @@ export function App() {
     if (activePlan || savedLayouts.length) {
       setPending({
         title: "Change the table layout?",
-        description: "This clears the current plan and saved versions. Guests and seating preferences are kept. You can undo the change.",
+        description: "This clears the current plan, saved versions, and seat pins because seat positions may change. Guests and other seating preferences are kept. You can undo the change.",
         confirm: "Change tables",
         apply
       });
@@ -391,6 +469,7 @@ export function App() {
       </div>
       <div className="top-actions">
         <button type="button" onClick={undo} disabled={!history.length || isShuffling || guestDraftChanged}>Undo</button>
+        <button type="button" onClick={handleShare} disabled={!ready || !hasSaveableData || guestDraftChanged || isShuffling || isSharing}>{isSharing ? "Creating link…" : "Share plan"}</button>
         <details className="file-menu" ref={fileMenuRef}>
           <summary>Backup &amp; restore <ChevronDown size={15} /></summary>
           <div className="file-menu-content">
@@ -402,10 +481,10 @@ export function App() {
       </div>
     </header>
     <div className="local-banner">
-      <p>Your guest list stays on this device. Plans are generated in your browser.</p>
+      <p>Your guest list stays on this device unless you share it. Plans are generated in your browser.</p>
       <details>
         <summary>How saving works</summary>
-        <p>Changes are saved automatically in this browser. Other browsers and devices have separate data. Clearing browser data removes your saved plans. Download a backup to keep a separate copy or move your work. Guest-list drafts are applied with Done.</p>
+        <p>Changes are saved automatically in this browser. Other browsers and devices have separate data. Clearing browser data removes your saved plans. Share a link to send a snapshot of your current plan, or download a backup including saved versions. Anyone with a share link can read its guest names and preferences. Guest-list drafts are applied with Done.</p>
       </details>
       <span className="save-status" role="status">{saveStatus}</span>
     </div>
@@ -444,7 +523,7 @@ export function App() {
           </div>
           <button type="button" onClick={() => setEditingTables(value => !value)} disabled={guestDraftChanged}>{editingTables ? "Cancel table changes" : "Change tables"}</button>
         </div>
-        {editingTables ? <VenueSetup config={venueConfig} onConfirm={confirmTables} /> : <>
+        {editingTables ? <VenueSetup config={venueConfig} reservedTableIds={columns.flatMap(column => Object.values(column.tableMapping).filter((id): id is number => id !== null))} onConfirm={confirmTables} /> : <>
           <p>{venueConfig.tables.length} tables · {layout.seatIds.length} seats. Use these tables or change them to match your venue.</p>
           <RoomLayout config={venueConfig} disabled={guestDraftChanged} onChange={positions => {
             remember();
@@ -488,39 +567,43 @@ export function App() {
         {importWarnings.map(warning => <p className="warning-text" key={warning}>{warning}</p>)}
         {hasTooManyGuests && <p className="warning-text" role="alert">{guests.length - layout.seatIds.length} more guests than seats. Add seats or remove guests; extra guests will remain unseated.</p>}
       </section>
+      <SeatPinsPanel seatPins={seatPins} guestsById={guestsById} layout={layout} onUnpin={removeSeatPin} />
+      {fixedTables.issues.length > 0 && <section className="panel-section fixed-table-issues" role="alert"><h2>Check fixed table assignments</h2><p>Resolve table mappings in Seating preferences → Rules from guest columns, or remove conflicting seat pins above, before generating.</p><ul>{fixedTables.issues.map(issue => <li key={issue}>{issue}</li>)}</ul></section>}
       <details className="panel-section preferences-disclosure">
-        <summary><span className="step-label">Optional</span> Seating preferences <span className="muted-text">{validConstraints.length ? `${validConstraints.length} added` : "Who should sit near whom?"}</span></summary>
+        <summary><span className="step-label">Optional</span> Seating preferences <span className="muted-text">{preferenceCount ? `${preferenceCount} added` : "Who should sit near whom?"}</span></summary>
         <p>We’ll try to meet these preferences; some may conflict. You can generate a plan without any.</p>
         <fieldset disabled={!guests.length || guestDraftChanged}>
           {!guests.length && <p className="muted-text">Add guests above to set seating preferences.</p>}
           <PairEditor title="Seat near each other" type="prefer_adjacent" showPreference guests={guests} constraints={constraints} onChange={updateConstraints} />
           <PairEditor title="Keep apart" type="avoid_adjacent" guests={guests} constraints={constraints} onChange={updateConstraints} />
           {layout.headSeatIds.length > 0 && <HeadSeatEditor guests={guests} constraints={constraints} onChange={updateConstraints} />}
-          <label className="mix-setting"><input type="checkbox" checked={mixGroups} onChange={event => {
+          <GuestColumnsEditor columns={columns} guests={guests} layout={layout} onChange={next => {
             remember();
-            setMixGroups(event.target.checked);
+            setColumns(next);
             setCandidates([]);
-          }} /> Mix guests from the same group</label>
-          <p className="muted-text">When enabled, group labels encourage mixing by avoiding same-group neighbours. Explicit seating preferences take priority.</p>
+            setNotice("Column rules updated. Generate new options to use them.");
+          }} />
         </fieldset>
         <ConstraintAnalysisPanel analysis={constraintAnalysis} guestsById={guestsById} onGuestHighlight={setHighlightedGuestId} />
       </details>
       <div className="setup-next">
         <p>{guestDraftChanged ? "Use Done to apply your guest list first." : editingTables ? "Use these tables or cancel table changes before generating." : !guests.length ? "Add your guests to generate seating options." : `Ready: ${guests.length} guests · ${layout.seatIds.length} seats`}</p>
-        <button type="button" className="primary-button" onClick={handleShuffle} disabled={!guests.length || isShuffling || guestDraftChanged || editingTables}>
+        <button type="button" className="primary-button" onClick={handleShuffle} disabled={!guests.length || isShuffling || guestDraftChanged || editingTables || fixedTables.issues.length > 0}>
           {isShuffling ? <Loader size={18} className="spinning" /> : <Shuffle size={18} />}
           {isShuffling ? "Generating…" : "Generate seating plans"}
         </button>
       </div>
     </main>}
     {phase === "planning" && <main className="planning-workspace">
+      <SeatPinsPanel seatPins={seatPins} guestsById={guestsById} layout={layout} onUnpin={removeSeatPin} />
+      {(fixedTables.issues.length > 0 || fixedPlanIssues.length > 0) && <section className="panel-section fixed-table-issues" role="alert"><h2>Fixed table assignments need attention</h2><p>Check the rules in Setup, then generate a new plan or adjust seats.</p><ul>{[...fixedTables.issues, ...fixedPlanIssues].map(issue => <li key={issue}>{issue}</li>)}</ul></section>}
       {!activePlan ? <section className="panel-section first-plan">
         <Users size={32} />
         <h2>Your seating plan will appear here</h2>
         <p>{guests.length ? "Your guests are ready. Generate options, or return to setup to add preferences." : "Start by checking your tables and adding guests."}</p>
         <div className="inline-actions">
           <button type="button" onClick={() => setPhase("setup")}>Go to setup</button>
-          {guests.length > 0 && <button className="primary-button" type="button" onClick={handleShuffle} disabled={isShuffling}>{isShuffling ? "Generating…" : "Generate seating plans"}</button>}
+          {guests.length > 0 && <button className="primary-button" type="button" onClick={handleShuffle} disabled={isShuffling || fixedTables.issues.length > 0}>{isShuffling ? "Generating…" : "Generate seating plans"}</button>}
         </div>
       </section> : <>
         <div className="plan-toolbar">
@@ -529,7 +612,7 @@ export function App() {
             <p>{seatedGuestIds.size} of {guests.length} guests seated{holdingGuestIds.length ? ` · ${holdingGuestIds.length} unseated` : ""}</p>
           </div>
           <div className="inline-actions">
-            <button type="button" onClick={handleShuffle} disabled={isShuffling}>
+            <button type="button" onClick={handleShuffle} disabled={isShuffling || fixedTables.issues.length > 0}>
               {isShuffling ? <Loader size={17} className="spinning" /> : <Shuffle size={17} />}
               {isShuffling ? "Generating…" : "Generate more options"}
             </button>
@@ -541,11 +624,11 @@ export function App() {
           <section className="planner-surface">
             <div className="surface-toolbar">
               <h2>Seating layout</h2>
-              <span className="muted-text">Drag guests to move or swap seats</span>
+              <span className="muted-text">Drag guests to move or swap seats. Use the pin icon to keep a guest in their exact seat.</span>
               <button type="button" aria-pressed={roomView} onClick={() => setRoomView(value => !value)}>{roomView ? "Show as vertical list" : "Show as room layout"}</button>
             </div>
             <div className="print-area">
-              <TablePlan venueConfig={venueConfig} roomView={roomView} plan={activePlan} layout={layout} guestsById={guestsById} highlightedGuestId={highlightedGuestId ?? selectedGuestId} onDragStart={setDraggedGuestId} onSelectGuest={setSelectedGuestId} onDropIntoSeat={seatId => {
+              <TablePlan seatPins={seatPins} onTogglePin={toggleSeatPin} venueConfig={venueConfig} roomView={roomView} plan={activePlan} layout={layout} guestsById={guestsById} highlightedGuestId={highlightedGuestId ?? selectedGuestId} onDragStart={setDraggedGuestId} onSelectGuest={setSelectedGuestId} onDropIntoSeat={seatId => {
                 if (draggedGuestId) moveGuest(draggedGuestId, seatId);
                 setDraggedGuestId(null);
               }} />
@@ -572,7 +655,7 @@ export function App() {
             </fieldset>
           </section>
           <aside className="results-panel">
-            <ScorePanel score={activeScore} guestsById={guestsById} onGuestHighlight={setHighlightedGuestId} mixGroups={mixGroups} />
+            <ScorePanel score={activeScore} guestsById={guestsById} onGuestHighlight={setHighlightedGuestId} fixedGuestCount={fixedTables.assignments.size} />
             {candidates.length > 0 && <CandidateList candidates={candidates} activePlan={activePlan} onSelect={plan => applyPlan(plan, "Option loaded. Your previous arrangement can be restored with Undo.")} />}
           </aside>
         </div>
@@ -591,7 +674,7 @@ export function App() {
       </div>
       <LibraryPanel savedLayouts={savedLayouts.map(saved => ({
         ...saved,
-        summary: describeScore(scorePlan(saved.plan, guests, validConstraints, layout, mixGroups))
+        summary: describeScore(scorePlan(saved.plan, guests, validConstraints, layout, false, columns))
       }))} activePlanId={activePlan?.id ?? null} onLoad={plan => {
         applyPlan(plan, "Saved version loaded.");
         setPhase("planning");
@@ -608,11 +691,53 @@ export function App() {
       }} />
       {!savedLayouts.length && <button type="button" onClick={() => setPhase(activePlan ? "planning" : "setup")}>{activePlan ? "Return to plan to keep a version" : "Start a seating plan"}</button>}
     </main>}
+    {spreadsheetRows && <SpreadsheetImportDialog rows={spreadsheetRows} onCancel={() => setSpreadsheetRows(null)} onImport={result => {
+      applyGuests(result.guestText, true);
+      setColumns(result.columns);
+      setMixGroups(false);
+      setSpreadsheetRows(null);
+      setImportWarnings(result.warnings);
+      setPhase("setup");
+      setNotice(`Imported ${result.importedCount} guests and ${result.columns.length} columns. Choose how to use columns in Seating preferences.`);
+    }} />}
+    {shareUrl && <SharePlanDialog url={shareUrl} onClose={() => setShareUrl("")} />}
+    {sharedPlan && <ReviewDialog title="Open shared plan?" description={`${parseGuestText(sharedPlan.guestText).guests.length} guests · ${sharedPlan.constraints.length} seating preferences. This replaces your current session, including saved versions. You can undo this change.`} confirm="Open shared plan" onCancel={() => {
+      setSharedPlan(null);
+      clearShareHash();
+    }} onConfirm={() => {
+      remember();
+      restoreData(sharedPlan);
+      setCandidates([]);
+      setImportWarnings([]);
+      setImportError("");
+      setPhase(sharedPlan.activePlan ? "planning" : "setup");
+      setNotice("Shared plan opened. Changes are saved in this browser. Share a new link to send your edits.");
+      setSharedPlan(null);
+      clearShareHash();
+    }} />}
     {pending && <ReviewDialog title={pending.title} description={pending.description} preview={pending.preview} confirm={pending.confirm} onCancel={() => setPending(null)} onConfirm={() => {
       pending.apply();
       setPending(null);
     }} />}
   </div>;
+}
+function SeatPinsPanel({ seatPins, guestsById, layout, onUnpin }: {
+  seatPins: SeatPins;
+  guestsById: Map<string, Guest>;
+  layout: SeatingLayout;
+  onUnpin: (guestId: string) => void;
+}) {
+  const entries = Object.entries(seatPins);
+  if (!entries.length) return null;
+  return <details className="panel-section seat-pins-panel">
+    <summary>Pinned seats ({entries.length})</summary>
+    <p>Pinned guests stay in their exact seats when generating plans. Unpin a guest before moving them. Table layout changes clear seat pins.</p>
+    {entries.map(([guestId, seatId]) => {
+      const guest = guestsById.get(guestId);
+      const seat = layout.seatsById.get(seatId);
+      return <div className="seat-pin-row" key={guestId}><span>{guest?.name ?? "Unknown guest"} · {seat ? layout.tableConfigs.get(seat.tableId)?.label || `Table ${seat.tableId}` : "Missing seat"} · seat {seatId}</span><button type="button" onClick={() => onUnpin(guestId)} aria-label={`Unpin ${guest?.name ?? "unknown guest"}`}><PinOff size={15} /> Unpin</button></div>;
+    })}
+  </details>;
 }
 function ReviewDialog({
   title,
@@ -780,9 +905,9 @@ function PairEditor({
   function removePair(pairId: string) {
     onChange(constraints.filter(pair => pair.id !== pairId));
   }
-  return <section className="panel-section">
+  return <details className="panel-section preference-group">
+    <summary><h2>{title}</h2><span className="muted-text">{pairs.length} {pairs.length === 1 ? "pair" : "pairs"}</span></summary>
     <div className="section-heading">
-      <h2>{title}</h2>
       <button type="button" className="icon-text-button" onClick={() => setDraft({
         guestAId: "",
         guestBId: "",
@@ -859,7 +984,7 @@ function PairEditor({
         </div>;
       })}
     </div>
-  </section>;
+  </details>;
 }
 interface HeadSeatEditorProps {
   guests: Guest[];
@@ -891,9 +1016,9 @@ function HeadSeatEditor({
   function removeConstraint(constraintId: string) {
     onChange(constraints.filter(constraint => constraint.id !== constraintId));
   }
-  return <section className="panel-section">
+  return <details className="panel-section preference-group">
+    <summary><h2>End-seat preferences</h2><span className="muted-text">{headConstraints.length} added</span></summary>
     <div className="section-heading">
-      <h2>End-seat preferences</h2>
       <button type="button" className="icon-text-button" onClick={addConstraint} disabled={guests.length === 0} aria-label="Add end-seat preference">
         <Plus size={16} /> Add preference
       </button>
@@ -913,7 +1038,7 @@ function HeadSeatEditor({
         </button>
       </div>)}
     </div>
-  </section>;
+  </details>;
 }
 interface TablePlanProps {
   venueConfig: VenueConfig;
@@ -925,6 +1050,8 @@ interface TablePlanProps {
   onDragStart: (guestId: string) => void;
   onSelectGuest: (guestId: string) => void;
   onDropIntoSeat: (seatId: number) => void;
+  seatPins: SeatPins;
+  onTogglePin: (guestId: string, seatId: number) => void;
 }
 function TablePlan({
   venueConfig,
@@ -935,7 +1062,9 @@ function TablePlan({
   highlightedGuestId,
   onDragStart,
   onSelectGuest,
-  onDropIntoSeat
+  onDropIntoSeat,
+  seatPins,
+  onTogglePin
 }: TablePlanProps) {
   const { tables, width, height } = roomPlanGeometry(venueConfig);
   const placement = (id: number) => roomView ? {
@@ -949,7 +1078,7 @@ function TablePlan({
       if (config.kind === "circular") {
         return <div className="table-block circular-block" style={placement(tableId)} key={tableId}>
           <div className="table-label">{label}</div>
-          <CircularTableBlock seats={tableSeats} totalSeats={config.seats} plan={plan} guestsById={guestsById} highlightedGuestId={highlightedGuestId} onDragStart={onDragStart} onSelectGuest={onSelectGuest} onDropIntoSeat={onDropIntoSeat} />
+          <CircularTableBlock seatPins={seatPins} onTogglePin={onTogglePin} seats={tableSeats} totalSeats={config.seats} plan={plan} guestsById={guestsById} highlightedGuestId={highlightedGuestId} onDragStart={onDragStart} onSelectGuest={onSelectGuest} onDropIntoSeat={onDropIntoSeat} />
         </div>;
       }
       const seatsPerSide = config.seatsPerSide;
@@ -970,7 +1099,7 @@ function TablePlan({
           {tableSeats.map(seat => {
             const guestId = plan.assignments[seat.id];
             const guest = guestId ? guestsById.get(guestId) : undefined;
-            return <SeatCell key={seat.id} seatId={seat.id} side={seat.side} position={seat.position} seatsPerSide={seatsPerSide} hasLeftEnd={hasLeft} guest={guest} occupied={Boolean(guestId)} highlighted={Boolean(guest && guest.id === highlightedGuestId)} onDragStart={onDragStart} onSelectGuest={onSelectGuest} onDropIntoSeat={onDropIntoSeat} />;
+            return <SeatCell seatPins={seatPins} onTogglePin={onTogglePin} key={seat.id} seatId={seat.id} side={seat.side} position={seat.position} seatsPerSide={seatsPerSide} hasLeftEnd={hasLeft} guest={guest} occupied={Boolean(guestId)} highlighted={Boolean(guest && guest.id === highlightedGuestId)} onDragStart={onDragStart} onSelectGuest={onSelectGuest} onDropIntoSeat={onDropIntoSeat} />;
           })}
         </div>
       </div>;
@@ -989,6 +1118,8 @@ interface CircularTableBlockProps {
   onDragStart: (guestId: string) => void;
   onSelectGuest: (guestId: string) => void;
   onDropIntoSeat: (seatId: number) => void;
+  seatPins: SeatPins;
+  onTogglePin: (guestId: string, seatId: number) => void;
 }
 function CircularTableBlock({
   seats,
@@ -998,7 +1129,9 @@ function CircularTableBlock({
   highlightedGuestId,
   onDragStart,
   onSelectGuest,
-  onDropIntoSeat
+  onDropIntoSeat,
+  seatPins,
+  onTogglePin
 }: CircularTableBlockProps) {
   const size = 340;
   const cx = size / 2;
@@ -1014,7 +1147,7 @@ function CircularTableBlock({
       const guestId = plan.assignments[seat.id];
       const guest = guestId ? guestsById.get(guestId) : undefined;
       return <foreignObject key={seat.id} x={x - 38} y={y - 30} width={76} height={60}>
-        <SeatCell seatId={seat.id} side="circular" position={seat.position} seatsPerSide={0} hasLeftEnd={false} guest={guest} occupied={Boolean(guestId)} highlighted={Boolean(guest && guest.id === highlightedGuestId)} onDragStart={onDragStart} onSelectGuest={onSelectGuest} onDropIntoSeat={onDropIntoSeat} />
+        <SeatCell seatPins={seatPins} onTogglePin={onTogglePin} seatId={seat.id} side="circular" position={seat.position} seatsPerSide={0} hasLeftEnd={false} guest={guest} occupied={Boolean(guestId)} highlighted={Boolean(guest && guest.id === highlightedGuestId)} onDragStart={onDragStart} onSelectGuest={onSelectGuest} onDropIntoSeat={onDropIntoSeat} />
       </foreignObject>;
     })}
   </svg>;
@@ -1031,6 +1164,8 @@ interface SeatCellProps {
   onDragStart: (guestId: string) => void;
   onSelectGuest: (guestId: string) => void;
   onDropIntoSeat: (seatId: number) => void;
+  seatPins: SeatPins;
+  onTogglePin: (guestId: string, seatId: number) => void;
 }
 function SeatCell({
   seatId,
@@ -1043,8 +1178,11 @@ function SeatCell({
   highlighted,
   onDragStart,
   onSelectGuest,
-  onDropIntoSeat
+  onDropIntoSeat,
+  seatPins,
+  onTogglePin
 }: SeatCellProps) {
+  const pinned = Boolean(guest && Object.hasOwn(seatPins, guest.id));
   const style = getSeatStyle(side, position, seatsPerSide, hasLeftEnd);
   return <div className={`seat-cell ${occupied ? "occupied" : "empty"}`} style={style} onDragOver={event => {
     event.preventDefault();
@@ -1052,8 +1190,12 @@ function SeatCell({
     event.preventDefault();
     onDropIntoSeat(seatId);
   }}>
-    <div className="seat-number">{seatId}</div>
-    {guest ? <button type="button" className={`guest-chip ${getGroupClass(guest)}${highlighted ? " highlighted" : ""}`} draggable onClick={() => onSelectGuest(guest.id)} onDragStart={() => onDragStart(guest.id)} title={`${guest.name}${guest.groups.length > 0 ? `, ${guest.groups.join(", ")}` : ""}`}>
+    <div className="seat-heading"><div className="seat-number">{seatId}</div>
+      {guest && <button type="button" className={`seat-pin-toggle${pinned ? " is-pinned" : ""}`} aria-pressed={pinned} aria-label={pinned ? `Unpin ${guest.name} from seat ${seatPins[guest.id]}` : `Pin ${guest.name} to seat ${seatId}`} title={pinned ? "Pinned to this seat — click to unpin" : "Not pinned — click to pin to this seat"} onClick={() => onTogglePin(guest.id, seatId)}>
+        {pinned ? <Pin size={14} fill="currentColor" /> : <PinOff size={14} />}
+      </button>}
+    </div>
+    {guest ? <button type="button" className={`guest-chip ${getGroupClass(guest)}${highlighted ? " highlighted" : ""}`} draggable={!pinned} onClick={() => onSelectGuest(guest.id)} onDragStart={event => { if (pinned) event.preventDefault(); else onDragStart(guest.id); }} title={`${guest.name}${guest.groups.length > 0 ? `, ${guest.groups.join(", ")}` : ""}`}>
       <GripVertical size={14} />
       <span>{guest.name}</span>
     </button> : <span className="empty-seat-label">Empty</span>}
@@ -1101,9 +1243,9 @@ function ScorePanel({
   score,
   guestsById,
   onGuestHighlight,
-  mixGroups
+  fixedGuestCount
 }: ScorePanelProps & {
-  mixGroups: boolean;
+  fixedGuestCount: number;
 }) {
   if (!score) return null;
   const missedGood = score.preferred.filter(result => !result.adjacent);
@@ -1112,8 +1254,10 @@ function ScorePanel({
   const issues = missedGood.length + badAdjacent.length + missedHeadSeat.length;
   return <section className="panel-section score-panel">
     <h2>{issues ? `${issues} seating ${issues === 1 ? "preference" : "preferences"} to review` : score.preferred.length + score.avoided.length + score.headSeat.length ? "Seating preferences met" : "Review your plan"}</h2>
-    {!score.preferred.length && !score.avoided.length && !score.headSeat.length && <p className="muted-text">No seating preferences added. You can add them in Setup.</p>}
+    {!score.preferred.length && !score.avoided.length && !score.headSeat.length && !score.columnResults.length && !fixedGuestCount && <p className="muted-text">No seating preferences added. You can add them in Setup.</p>}
     <div className="review-summary">
+      {fixedGuestCount > 0 && <p>{fixedGuestCount} {fixedGuestCount === 1 ? "guest has a fixed table assignment" : "guests have fixed table assignments"}</p>}
+      {score.columnResults.length > 0 && <p>{score.columnResults.length} column {score.columnResults.length === 1 ? "rule used" : "rules used"} to break ties after individual preferences</p>}
       {score.preferred.length > 0 && <p>{score.preferred.length - missedGood.length} of {score.preferred.length} together-seating preferences met</p>}
       {score.avoided.length > 0 && <p>{badAdjacent.length} keep-apart issues</p>}
       {score.headSeat.length > 0 && <p>{score.headSeat.length - missedHeadSeat.length} of {score.headSeat.length} end-seat preferences met</p>}
@@ -1123,11 +1267,12 @@ function ScorePanel({
     <HeadSeatResults results={missedHeadSeat} guestsById={guestsById} onGuestHighlight={onGuestHighlight} />
     <details className="scoring-details">
       <summary>Scoring details</summary>
-      <p className="muted-text">Higher scores favour more preferences. Compare scores only with the same guests and settings.</p>
+      <p className="muted-text">Fixed table assignments always apply. Individual preferences come next, then grouping at the same table, then spreading and neighbour mixing. Compare scores with the same guests and settings.</p>
       <div className="metric-grid">
         <Metric label="Preference points" value={String(score.constraintPoints)} />
-        {mixGroups && <Metric label="Group mixing points" value={String(score.groupPoints)} />}
-        <Metric label="Total points" value={String(score.total)} />
+        {score.columnResults.some(result => result.mode === "cluster") && <Metric label="Same-table column priority" value={score.clusterPoints.toFixed(3)} />}
+        {score.columnResults.some(result => result.mode !== "cluster") && <Metric label="Other column tiebreaker" value={(score.groupPoints - score.clusterPoints).toFixed(3)} />}
+        {score.columnResults.map(result => <Metric key={result.columnId} label={result.label} value={result.points.toFixed(3)} />)}
       </div>
     </details>
   </section>;
@@ -1207,7 +1352,8 @@ function describeScore(score: ScoreBreakdown): string {
   if (score.preferred.length) parts.push(`${score.preferred.filter(pair => pair.adjacent).length} of ${score.preferred.length} near preferences met`);
   if (score.avoided.length) parts.push(`${score.avoided.filter(pair => pair.adjacent).length} keep-apart issues`);
   if (score.headSeat.length) parts.push(`${score.headSeat.filter(result => !result.satisfied).length} end-seat issues`);
-  return parts.join(" · ") || "No seating preferences added";
+  if (score.columnResults.length) parts.push(`${score.columnResults.length} column ${score.columnResults.length === 1 ? "rule" : "rules"} applied`);
+  return parts.join(" · ") || "No individual seating preferences added";
 }
 function CandidateList({
   candidates,
@@ -1383,13 +1529,16 @@ function getGroupClass(guest: Guest): string {
 }
 interface VenueSetupProps {
   config: VenueConfig;
+  reservedTableIds: number[];
   onConfirm: (config: VenueConfig) => void;
 }
 function VenueSetup({
   config,
+  reservedTableIds,
   onConfirm
 }: VenueSetupProps) {
   const [tables, setTables] = useState<TableConfig[]>(config.tables);
+  const nextTableId = useRef(Math.max(config.nextTableId ?? 1, ...config.tables.map(table => table.id + 1), ...reservedTableIds.map(id => id + 1)));
   const shapeDrafts = useRef(new Map<string, TableConfig>());
   const tablesById = new Map(tables.map(table => [table.id, table]));
   const orderedTables = roomTableOrder({ ...config, tables }).map(id => tablesById.get(id)!);
@@ -1409,14 +1558,13 @@ function VenueSetup({
   const [leftEnd, setLeftEnd] = useState(false);
   const [rightEnd, setRightEnd] = useState(true);
   function appendTables(template: TableConfig, count: number) {
-    setTables(current => {
-      const nextId = Math.max(0, ...current.map(table => table.id)) + 1;
-      return [...current, ...Array.from({ length: count }, (_, index) => ({
-        ...template,
-        id: nextId + index,
-        label: `Table ${nextId + index}`
-      }))];
-    });
+    const firstId = nextTableId.current;
+    nextTableId.current += count;
+    setTables(current => [...current, ...Array.from({ length: count }, (_, index) => ({
+      ...template,
+      id: firstId + index,
+      label: `Table ${firstId + index}`
+    }))]);
   }
   function removeTable(id: number) {
     shapeDrafts.current.delete(`${id}:rect`);
@@ -1514,6 +1662,7 @@ function VenueSetup({
     <div className="venue-setup-actions">
       <button type="button" className="primary-button" disabled={tables.length === 0} onClick={() => onConfirm({
         ...config,
+        nextTableId: nextTableId.current,
         tables
       })}>
         Use these tables

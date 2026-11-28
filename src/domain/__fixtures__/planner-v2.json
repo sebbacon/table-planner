@@ -1,0 +1,29 @@
+{
+  "version": 2,
+  "exportedAt": "2026-11-27T16:00:00.000Z",
+  "guestText": "Zoë 李, Family, Younger\nSam, Friends\nAlex",
+  "guestIds": ["zoe", "sam", "alex"],
+  "mixGroups": false,
+  "constraints": [
+    { "id": "pair", "type": "prefer_adjacent", "guestAId": "zoe", "guestBId": "sam", "preference": "chat", "priority": "high" },
+    { "id": "apart", "type": "avoid_adjacent", "guestAId": "zoe", "guestBId": "alex" },
+    { "id": "end", "type": "avoid_head", "guestId": "sam" }
+  ],
+  "activePlan": { "id": "current", "assignments": { "1": "zoe", "2": null, "4": "sam" }, "holdingGuestIds": ["alex"] },
+  "seatPins": { "zoe": 1, "sam": 4 },
+  "venueConfig": {
+    "nextTableId": 8,
+    "positions": { "0": { "x": 100, "y": 200 }, "4": { "x": 300, "y": 40 } },
+    "tables": [
+      { "id": 0, "kind": "rect", "label": "Family", "seatsPerSide": 1, "leftEnd": true, "rightEnd": false },
+      { "id": 4, "kind": "circular", "label": "Friends", "seats": 3 }
+    ]
+  },
+  "columns": [
+    { "id": "fixed", "label": "Table", "mode": "table", "values": { "zoe": ["Family"], "sam": ["Friends"] }, "tableMapping": { "Family": 0, "Friends": 4 } },
+    { "id": "notes", "label": "Notes", "mode": "ignore", "values": { "alex": ["Vegan"] }, "tableMapping": {} }
+  ],
+  "savedLayouts": [
+    { "id": "saved", "name": "Earlier version", "savedAt": "2026-11-27T15:00:00.000Z", "scoreTotal": 12, "plan": { "id": "earlier", "assignments": { "1": "zoe", "5": "sam" }, "holdingGuestIds": ["alex"] } }
+  ]
+}

@@ -60,18 +60,24 @@ export function reconcileGuestText(input: string, previous: Guest[]): GuestParse
 }
 
 function parseGuestLine(line: string): { name: string; groups: string[] } {
-  const parts = line
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
-
+  const parts: string[] = [];
+  let cell = "";
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === '"' && (quoted || !cell.trim())) {
+      if (quoted && line[i + 1] === '"') { cell += '"'; i++; }
+      else quoted = !quoted;
+    } else if (line[i] === "," && !quoted) { parts.push(cell.trim()); cell = ""; }
+    else cell += line[i];
+  }
+  parts.push(cell.trim());
   if (parts.length <= 1) {
-    return { name: line.trim(), groups: [] };
+    return { name: parts[0] ?? "", groups: [] };
   }
 
   return {
     name: parts[0],
-    groups: parts.slice(1)
+    groups: parts.slice(1).filter(Boolean)
   };
 }
 
@@ -83,4 +89,8 @@ function slugify(value: string): string {
       .replace(/^-|-$/g, "")
       .slice(0, 24) || "guest"
   );
+}
+
+export function formatGuestLine(name: string, groups: string[] = []): string {
+  return [name, ...groups].map(value => /[,"]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value).join(", ");
 }

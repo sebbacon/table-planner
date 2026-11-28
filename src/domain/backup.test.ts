@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createPlannerBackup, parsePlannerBackupJson } from "./backup";
 import type { PlannerData } from "./backup";
 import type { Constraint, ConstraintPair } from "./types";
+import { DEFAULT_VENUE_CONFIG } from "./venueConfig";
+import { PLANNER_DATA_VERSION } from "./persistence";
 
 const pair: ConstraintPair = {
   id: "pair-1",
@@ -34,13 +36,14 @@ describe("planner backup", () => {
         { kind: "circular", id: 20, label: "Family", seats: 5 }
       ] }
     };
-    expect(parsePlannerBackupJson(JSON.stringify(createPlannerBackup(data)))).toEqual(data);
+    expect(parsePlannerBackupJson(JSON.stringify(createPlannerBackup(data)))).toMatchObject(data);
   });
 
   it("loads older exports without saved layouts, venue configuration, or pair strength", () => {
     expect(parseWith({ constraints: [pair] })).toEqual({
       guestText: minimalBackup.guestText, constraints: [pair], activePlan: null,
-      savedLayouts: [], venueConfig: undefined
+      savedLayouts: [], venueConfig: DEFAULT_VENUE_CONFIG,
+      guestIds: ["guest-1-jane", "guest-2-sam"], mixGroups: true, columns: [], seatPins: {}
     });
   });
 
@@ -56,7 +59,7 @@ describe("planner backup", () => {
     expect(() => parsePlannerBackupJson("{")).toThrow("not valid JSON");
   });
 
-  it.each([null, [], 3, { version: 2 }])("rejects unsupported export structures (%j)", (value) => {
+  it.each([null, [], 3, { version: 99 }])("rejects unsupported export structures (%j)", (value) => {
     expect(() => parsePlannerBackupJson(JSON.stringify(value))).toThrow("not a supported table planner export");
   });
 
@@ -109,7 +112,7 @@ describe("planner backup", () => {
     { tables: [{ kind: "unknown", id: 1 }] }
   ])("falls back from malformed venue configuration without losing the plan (%j)", (venueConfig) => {
     const parsed = parseWith({ venueConfig, activePlan: plan });
-    expect(parsed.venueConfig).toBeUndefined();
+    expect(parsed.venueConfig).toEqual(DEFAULT_VENUE_CONFIG);
     expect(parsed.activePlan).toEqual(plan);
   });
 
@@ -132,8 +135,8 @@ describe("planner backup", () => {
       "2026-05-27T12:00:00.000Z"
     );
 
-    expect(backup).toEqual({
-      version: 1,
+    expect(backup).toMatchObject({
+      version: PLANNER_DATA_VERSION,
       exportedAt: "2026-05-27T12:00:00.000Z",
       guestText: "Jane, F\nSam, M",
       constraints: [pair],
@@ -179,7 +182,7 @@ it("round-trips stable guest identities and explicit group-mixing settings", () 
 
 it.each([["same", "same"], ["one"], [1, 2]])("ignores invalid persisted guest identities: %j", (...guestIds) => {
   const parsed = parsePlannerBackupJson(JSON.stringify({ version: 1, guestText: "Jane\nSam", guestIds, constraints: [], activePlan: null }));
-  expect(parsed.guestIds).toBeUndefined();
+  expect(parsed.guestIds).toEqual(["guest-1-jane", "guest-2-sam"]);
 });
 
 it("round-trips seating intent and priority independently, including legacy fields", () => {
@@ -197,4 +200,38 @@ it("ignores invalid intent and priority fields and excludes them from avoidance 
   expect(parsePlannerBackupJson(JSON.stringify({ ...data, constraints: [{ ...pair, preference: "bad", priority: "urgent" }] })).constraints).toEqual([pair]);
   const avoided = { ...pair, type: "avoid_adjacent" };
   expect(parsePlannerBackupJson(JSON.stringify({ ...data, constraints: [{ ...avoided, preference: "chat", priority: "high" }] })).constraints).toEqual([avoided]);
+});
+
+it("round-trips version 2 attributes, rules, table mappings, and the table identity counter", () => {
+  const data: PlannerData = {
+    guestText: "Jane\nSam", guestIds: ["jane", "sam"], constraints: [], activePlan: null, savedLayouts: [],
+    venueConfig: { tables: [{ id: 0, kind: "circular", seats: 3, label: "Orchard" }], nextTableId: 10 },
+    columns: [
+      { id: "department", label: "Department", mode: "spread", values: { jane: ["Arts, crafts"], sam: [] }, tableMapping: {} },
+      { id: "table", label: "Table", mode: "table", values: { jane: ["VIP"], sam: ["Unknown"] }, tableMapping: { VIP: 0, Unknown: null } },
+      { id: "groups", label: "Groups", mode: "neighbours", legacyGroups: true, values: { jane: ["Family", "Younger"] }, tableMapping: {} }
+    ]
+  };
+  const backup = createPlannerBackup(data);
+  expect(backup.version).toBe(PLANNER_DATA_VERSION);
+  expect(parsePlannerBackupJson(JSON.stringify(backup))).toMatchObject(data);
+});
+
+it.each([
+  {}, [null], [{ id: "a", label: "A", mode: "bad", values: {}, tableMapping: {} }],
+  [{ id: "a", label: "A", mode: "table", values: { jane: "X" }, tableMapping: {} }],
+  [{ id: "a", label: "A", mode: "table", values: {}, tableMapping: { X: "1" } }],
+  Array.from({ length: 2 }, () => ({ id: "a", label: "A", mode: "ignore", values: {}, tableMapping: {} }))
+])("rejects malformed columns without silently losing preferences (%j)", columns => {
+  expect(() => parsePlannerBackupJson(JSON.stringify({ version: 2, guestText: "Jane", constraints: [], activePlan: null, columns }))).toThrow("data file contains");
+});
+
+it("round-trips optional seat pins without changing older backup defaults", () => {
+  const data: PlannerData = { guestText: "Jane\nSam", guestIds: ["jane", "sam"], constraints: [], activePlan: null, seatPins: { jane: 1, sam: 39 } };
+  expect(parsePlannerBackupJson(JSON.stringify(createPlannerBackup(data))).seatPins).toEqual(data.seatPins);
+  expect(parsePlannerBackupJson(JSON.stringify({ version: 1, guestText: "Jane", constraints: [], activePlan: null })).seatPins).toEqual({});
+});
+
+it.each([[], null, { jane: "1" }, { jane: 0 }, { jane: -1 }, { jane: 1.5 }])("rejects malformed seat pins (%j)", seatPins => {
+  expect(() => parsePlannerBackupJson(JSON.stringify({ version: 2, guestText: "Jane", constraints: [], activePlan: null, seatPins }))).toThrow("invalid seat pins");
 });

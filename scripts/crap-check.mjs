@@ -27,3 +27,26 @@ test("CRAP combines classic complexity with uncovered, partial, and full coverag
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("CRAP matches constructor coverage declared at the method key", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "crap-constructor-test-")));
+  try {
+    await mkdir(join(root, "coverage"));
+    const file = join(root, "sample.ts");
+    await writeFile(file, "class Sample {\n  constructor(x) {\n    if (x) this.x = 1;\n  }\n}\n");
+    for (const [hits, expected] of [[0, 6], [1, 2]]) {
+      await writeFile(join(root, "coverage/coverage-final.json"), JSON.stringify({ [file]: {
+        fnMap: { 0: { name: "constructor", decl: { start: { line: 2, column: 2 }, end: { line: 2, column: 13 } }, loc: { start: { line: 2, column: 17 }, end: { line: 4, column: 3 } } } },
+        f: { 0: hits },
+        statementMap: { 0: { start: { line: 3, column: 4 }, end: { line: 3, column: 23 } } }, s: { 0: hits }
+      } }));
+      execFileSync(process.execPath, [resolve("scripts/crap.mjs")], { cwd: root });
+      const rows = JSON.parse(await readFile(join(root, "coverage/crap.json"), "utf8"));
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].complexity, 2);
+      assert.equal(rows[0].crap, expected);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

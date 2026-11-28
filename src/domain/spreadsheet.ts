@@ -1,4 +1,6 @@
 import { readSheet } from "read-excel-file/browser";
+import { formatGuestLine, parseGuestText } from "./parser";
+import type { GuestColumn } from "./types";
 import { readFileText } from "./file";
 
 type SpreadsheetCell = string | number | boolean | Date | null | undefined;
@@ -8,6 +10,7 @@ export interface SpreadsheetImportResult {
   guestText: string;
   importedCount: number;
   warnings: string[];
+  columns: GuestColumn[];
 }
 
 const NAME_HEADERS = new Set([
@@ -24,61 +27,76 @@ const FIRST_NAME_HEADERS = new Set(["first", "first name", "firstname", "forenam
 const LAST_NAME_HEADERS = new Set(["last", "last name", "lastname", "surname", "family name"]);
 const GROUP_HEADERS = new Set(["group", "groups", "category", "dimension", "type", "gender", "sex"]);
 
-export async function spreadsheetFileToGuestText(file: File): Promise<SpreadsheetImportResult> {
+export interface SpreadsheetOptions {
+  hasHeader: boolean;
+  nameColumns: number[];
+  includedColumns?: number[];
+}
+
+export async function readGuestSpreadsheet(file: File): Promise<SpreadsheetRow[]> {
   const extension = getFileExtension(file.name);
-
   if (extension === "csv" || extension === "tsv") {
-    const rows = parseDelimitedText(await readFileText(file), extension === "tsv" ? "\t" : undefined);
-    return rowsToGuestText(rows);
+    return parseDelimitedText(await readFileText(file), extension === "tsv" ? "\t" : undefined);
   }
-
-  if (extension === "xlsx") {
-    const rows = await readSheet(file);
-    return rowsToGuestText(rows as SpreadsheetRow[]);
-  }
-
+  if (extension === "xlsx") return await readSheet(file) as SpreadsheetRow[];
   throw new Error("Upload a .xlsx, .csv, or .tsv file.");
 }
 
-export function rowsToGuestText(rows: SpreadsheetRow[]): SpreadsheetImportResult {
-  const warnings: string[] = [];
-  const nonEmptyRows = rows.filter((row) => row.some((cell) => normalizeCell(cell)));
+export async function spreadsheetFileToGuestText(file: File): Promise<SpreadsheetImportResult> {
+  return rowsToGuestText(await readGuestSpreadsheet(file));
+}
 
-  if (nonEmptyRows.length === 0) {
-    return {
-      guestText: "",
-      importedCount: 0,
-      warnings: ["The spreadsheet did not contain any guest rows."]
-    };
-  }
+export function defaultSpreadsheetOptions(rows: SpreadsheetRow[]): SpreadsheetOptions {
+  const header = rows.find(row => row.some(cell => normalizeCell(cell))) ?? [];
+  const detected = detectColumns(header);
+  const nameColumns = detected.nameIndex !== null ? [detected.nameIndex]
+    : [detected.firstNameIndex, detected.lastNameIndex].filter((index): index is number => index !== null);
+  return { hasHeader: detected.hasHeader, nameColumns: nameColumns.length ? nameColumns : [0] };
+}
 
-  const columns = detectColumns(nonEmptyRows[0]);
-  const dataRows = columns.hasHeader ? nonEmptyRows.slice(1) : nonEmptyRows;
-
-  if (!columns.hasHeader) {
-    warnings.push("No header row found. Used column A for names and column B for groups.");
-  }
-
-  const guestLines = dataRows.flatMap((row, index) => {
-    const name = getNameFromRow(row, columns);
-    const group = columns.groupIndex === null ? "" : normalizeCell(row[columns.groupIndex]);
-
-    if (!name) {
-      if (row.some((cell) => normalizeCell(cell))) {
-        warnings.push(`Skipped row ${index + (columns.hasHeader ? 2 : 1)} because it has no name.`);
-      }
-
-      return [];
-    }
-
-    return group ? [`${name}, ${group}`] : [name];
+export function spreadsheetHeaders(rows: SpreadsheetRow[], hasHeader: boolean): string[] {
+  const nonEmpty = rows.filter(row => row.some(cell => normalizeCell(cell)));
+  const width = Math.max(0, ...nonEmpty.map(row => row.length));
+  const labels = Array.from({ length: width }, (_, index) => hasHeader ? normalizeCell(nonEmpty[0]?.[index]) || `Column ${index + 1}` : `Column ${index + 1}`);
+  const used = new Set<string>();
+  return labels.map((label, index) => {
+    let unique = labels.filter(other => other === label).length > 1 ? `${label} (column ${index + 1})` : label;
+    while (used.has(unique)) unique += ` (column ${index + 1})`;
+    used.add(unique);
+    return unique;
   });
+}
 
-  return {
-    guestText: guestLines.join("\n"),
-    importedCount: guestLines.length,
-    warnings
-  };
+export function rowsToGuestText(rows: SpreadsheetRow[], options = defaultSpreadsheetOptions(rows)): SpreadsheetImportResult {
+  const warnings: string[] = [];
+  const nonEmpty = rows.filter(row => row.some(cell => normalizeCell(cell)));
+  const headers = spreadsheetHeaders(rows, options.hasHeader);
+  const attributeIndices = headers.map((_, index) => index).filter(index => !options.nameColumns.includes(index)
+    && (!options.includedColumns || options.includedColumns.includes(index)));
+  const dataRows = options.hasHeader ? nonEmpty.slice(1) : nonEmpty;
+  const keptRows: SpreadsheetRow[] = [];
+  const names: string[] = [];
+  for (const [index, row] of dataRows.entries()) {
+    const name = options.nameColumns.map(index => normalizeCell(row[index])).filter(Boolean).join(" ").replace(/[\r\n]+/g, " ");
+    if (!name) {
+      warnings.push(`Skipped row ${index + (options.hasHeader ? 2 : 1)} because it has no name.`);
+      continue;
+    }
+    names.push(formatGuestLine(name));
+    keptRows.push(row);
+  }
+  if (!nonEmpty.length) warnings.push("The spreadsheet did not contain any guest rows.");
+  if (!options.hasHeader && nonEmpty.length) warnings.push("No header row selected. Review the name column and column labels before importing.");
+  const guestText = names.join("\n");
+  const guests = parseGuestText(guestText).guests;
+  const columns = attributeIndices.map(index => ({
+    id: `column-${index + 1}`, label: headers[index], mode: "ignore" as const, tableMapping: {},
+    values: Object.fromEntries(guests.map((guest, rowIndex) => {
+      const value = normalizeCell(keptRows[rowIndex][index]);
+      return [guest.id, value ? [value] : []];
+    }))
+  }));
+  return { guestText, importedCount: guests.length, warnings: [...warnings, ...parseGuestText(guestText).warnings], columns };
 }
 
 interface ColumnDetection {
@@ -114,17 +132,6 @@ function detectColumns(headerRow: SpreadsheetRow): ColumnDetection {
     lastNameIndex: null,
     groupIndex: headerRow.length > 1 ? 1 : null
   };
-}
-
-function getNameFromRow(row: SpreadsheetRow, columns: ColumnDetection): string {
-  if (columns.nameIndex !== null) {
-    return normalizeCell(row[columns.nameIndex]);
-  }
-
-  const firstName = columns.firstNameIndex === null ? "" : normalizeCell(row[columns.firstNameIndex]);
-  const lastName = columns.lastNameIndex === null ? "" : normalizeCell(row[columns.lastNameIndex]);
-
-  return [firstName, lastName].filter(Boolean).join(" ").trim();
 }
 
 function findHeaderIndex(headers: string[], candidates: Set<string>): number | null {

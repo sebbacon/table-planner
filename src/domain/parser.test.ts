@@ -45,3 +45,7 @@ describe("stable guest identities", () => {
     expect(restored.guests.map((guest) => guest.id)).toEqual(["jane", "sam"]);
   });
 });
+
+it("preserves literal quotation marks in existing unquoted names", () => {
+  expect(parseGuestText('Sam "Sunny" Jones, Family').guests[0]).toMatchObject({ name: 'Sam "Sunny" Jones', groups: ["Family"] });
+});

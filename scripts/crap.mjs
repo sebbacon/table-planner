@@ -31,11 +31,17 @@ for (const [file, data] of Object.entries(coverage)) {
   for (const { node, complexity } of functions) {
     const start = offset(node.loc.start);
     const end = offset(node.loc.end);
+    // V8 starts a method declaration at its key; ESTree's FunctionExpression
+    // starts at the following "(". Include the key when matching constructors
+    // and object/class methods without relaxing matches for other functions.
+    const parent = node.parent;
+    const headerStart = parent?.type === "MethodDefinition" || (parent?.type === "Property" && parent.method)
+      ? offset(parent.key.loc.start) : start;
     // V8's source-mapped body end can include trailing call punctuation.
     // Match the declaration in the function header, then prefer the closest
     // body start; strict containment of the body would reject valid mappings.
     const matches = Object.entries(data.fnMap).filter(([, fn]) =>
-      offset(fn.decl.start) >= start && offset(fn.decl.start) <= offset(node.body.loc.start));
+      offset(fn.decl.start) >= headerStart && offset(fn.decl.start) <= offset(node.body.loc.start));
     matches.sort((a, b) => Math.abs(offset(a[1].loc.start) - offset(node.body.loc.start))
       - Math.abs(offset(b[1].loc.start) - offset(node.body.loc.start)));
     const match = matches[0];
