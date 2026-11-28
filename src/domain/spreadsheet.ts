@@ -140,7 +140,7 @@ function findHeaderIndex(headers: string[], candidates: Set<string>): number | n
   return index === -1 ? null : index;
 }
 
-function parseDelimitedText(input: string, explicitDelimiter?: "," | "\t"): SpreadsheetRow[] {
+export function parseDelimitedText(input: string, explicitDelimiter?: "," | "\t"): SpreadsheetRow[] {
   const delimiter = explicitDelimiter ?? detectDelimiter(input);
   const rows: SpreadsheetRow[] = [];
   let currentCell = "";

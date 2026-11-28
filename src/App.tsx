@@ -1,8 +1,12 @@
+import { TableAssignments } from "./TableAssignments";
+import { GuestGridEditor, GuestGridPreview } from "./GuestGridEditor";
+import { guestGridText, importedGuestGrid, type GuestGridData } from "./domain/guestGrid";
 import { GuestColumnsEditor } from "./GuestColumnsEditor";
+import { WelcomeDialog } from "./WelcomeDialog";
 import { SharePlanDialog } from "./SharePlanDialog";
 import { clearShareHash, createShareUrl, readShareHash } from "./domain/share";
 import { SpreadsheetImportDialog } from "./SpreadsheetImportDialog";
-import { legacyGroupColumn, reconcileColumns, resolveTableAssignments, seatPinViolations, tableAssignmentViolations } from "./domain/guestColumns";
+import { legacyGroupColumn, reconcileColumns, resolveTableAssignments, seatPinViolations } from "./domain/guestColumns";
 import { PreferenceGuide } from "./PreferenceGuide";
 import { getPairPreference, getPairPriority, PREFERENCE_LABELS } from "./domain/pairPreferences";
 import { roomPlanGeometry } from "./domain/roomPlan";
@@ -18,16 +22,18 @@ import { readFileText } from "./domain/file";
 import { buildSeatingLayout } from "./domain/seating";
 import { createInitialPlan, scorePlan } from "./domain/scoring";
 import { DEFAULT_EFFORT, EFFORT_LEVELS, generatePlans, type ScoredPlan } from "./domain/solver";
-import { readGuestSpreadsheet, type SpreadsheetRow } from "./domain/spreadsheet";
+import { readGuestSpreadsheet, rowsToGuestText, type SpreadsheetRow } from "./domain/spreadsheet";
 import { isHeadSeatConstraint, isPairConstraint, type Constraint, type HeadSeatConstraint, type PairConstraintType, type PairPreference, type PairPriority, type ConstraintPair, type Guest, type GuestColumn, type Plan, type SavedLayout, type ScoreBreakdown, type SeatingLayout, type SeatPins, type TableConfig, type VenueConfig } from "./domain/types";
 import { DEFAULT_VENUE_CONFIG, roomTableOrder } from "./domain/venueConfig";
-import { formatGuestLine, parseGuestText, reconcileGuestText } from "./domain/parser";
-const PLACEHOLDER_GUESTS = Array.from({
-  length: 39
-}, (_, index) => {
-  const group = index % 3 === 0 ? ", Bride" : index % 3 === 1 ? ", Groom" : "";
-  return `Guest ${index + 1}${group}`;
-}).join("\n");
+import { parseGuestText, reconcileGuestText } from "./domain/parser";
+const EXAMPLE_GUESTS = rowsToGuestText([
+  ["Name", "Friend group", "Department"],
+  ...Array.from({ length: 39 }, (_, index) => [
+    `Guest ${index + 1}`,
+    ["School", "University", "Running club", "Neighbours", "Work friends", "Family"][Math.floor(index / 7)],
+    ["Finance", "Engineering", "Sales"][index % 3]
+  ])
+]);
 export function App() {
   const [guestText, setGuestText] = useState("");
   const [guestIds, setGuestIds] = useState<string[]>([]);
@@ -39,7 +45,8 @@ export function App() {
   const [targetSeat, setTargetSeat] = useState("");
   const [highlightedGuestId, setHighlightedGuestId] = useState<string | null>(null);
   const [isEditingGuests, setIsEditingGuests] = useState(false);
-  const [guestDraft, setGuestDraft] = useState("");
+  const [gridInitial, setGridInitial] = useState<GuestGridData | null>(null);
+  const [gridDirty, setGridDirty] = useState(false);
   const [importWarnings, setImportWarnings] = useState<string[]>([]);
   const [importError, setImportError] = useState("");
   const [saveStatus, setSaveStatus] = useState("Starting local storage…");
@@ -55,6 +62,7 @@ export function App() {
   const [roomView, setRoomView] = useState(false);
   const [phase, setPhase] = useState<"setup" | "planning" | "saved">("setup");
   const [editingTables, setEditingTables] = useState(false);
+  const [tableChoiceFocus, setTableChoiceFocus] = useState(0);
   const [ready, setReady] = useState(false);
   const [storageBlocked, setStorageBlocked] = useState(false);
   const [shareUrl, setShareUrl] = useState("");
@@ -154,13 +162,14 @@ export function App() {
   const activeScore = useMemo(() => activePlan ? scorePlan(activePlan, guests, validConstraints, layout, false, columns) : null, [activePlan, guests, validConstraints, layout, columns]);
   const constraintAnalysis = useMemo(() => analyzeConstraints(guests, validConstraints, layout), [guests, validConstraints, layout]);
   const fixedTables = useMemo(() => resolveTableAssignments(columns, guests, layout, seatPins), [columns, guests, layout, seatPins]);
-  const fixedPlanIssues = useMemo(() => activePlan ? [...seatPinViolations(activePlan, seatPins, guests), ...tableAssignmentViolations(activePlan, fixedTables.assignments, guests, layout)] : [], [activePlan, seatPins, fixedTables, guests, layout]);
+  const fixedTableConflicts = fixedTables.issues.filter(issue => !fixedTables.missingMappingIssues.includes(issue));
+  const fixedPlanIssues = useMemo(() => activePlan ? seatPinViolations(activePlan, seatPins, guests) : [], [activePlan, seatPins, guests]);
   const seatedGuestIds = new Set(Object.values(activePlan?.assignments ?? {}).filter(Boolean));
   const holdingGuestIds = guests.filter(guest => !seatedGuestIds.has(guest.id)).map(guest => guest.id);
   const hasTooManyGuests = guests.length > layout.seatIds.length;
   const hasSaveableData = Boolean(guestText.trim() || activePlan || savedLayouts.length || JSON.stringify(venueConfig) !== JSON.stringify(DEFAULT_VENUE_CONFIG));
-  const preferenceCount = validConstraints.length + columns.filter(column => column.mode !== "ignore").length;
-  const guestDraftChanged = isEditingGuests && guestDraft !== guestText;
+  const preferenceCount = validConstraints.length;
+  const guestDraftChanged = isEditingGuests && gridDirty;
   function currentData(): PlannerData {
     return {
       guestText,
@@ -185,7 +194,6 @@ export function App() {
     setStorageBlocked(false);
     setGuestText(data.guestText);
     setGuestIds(data.guestIds);
-    setGuestDraft(data.guestText);
     setConstraints(data.constraints);
     setActivePlan(data.activePlan);
     setSavedLayouts(data.savedLayouts);
@@ -212,13 +220,22 @@ export function App() {
     setCandidates([]);
     setNotice("Preferences updated. Generate new options to use them.");
   }
+  function updateGuestColumns(next: GuestColumn[]) {
+    remember();
+    setColumns(next);
+    setCandidates([]);
+    const resolved = resolveTableAssignments(next, guests, layout, seatPins);
+    const enabledAssignment = next.some(column => column.mode === "table" && columns.find(old => old.id === column.id)?.mode !== "table");
+    if (enabledAssignment && resolved.missingMappingIssues.length) setTableChoiceFocus(value => value + 1);
+    setNotice(resolved.missingMappingIssues.length ? "Next: choose a table for each group in the table choices below." : "Column rules updated. Generate new options to use them.");
+  }
   function applyGuests(text: string, replace = false, explicitIds?: string[]) {
     const parsed = explicitIds ? parseGuestText(text, explicitIds) : replace ? parseGuestText(text) : reconcileGuestText(text, guests);
     const ids = new Set(parsed.guests.map(guest => guest.id));
     const removed = guests.filter(guest => !ids.has(guest.id));
     const added = parsed.guests.filter(guest => !guestsById.has(guest.id));
     if (!replace && !explicitIds && removed.length && added.length) {
-      setPending({ title: "Review guest-list changes", description: "These names are treated as removed and added. Seats and preferences for removed guests will be cleared. To rename someone instead, cancel and use the pencil beside their name in View guest list.", preview: `Removed:\n${removed.map(guest => guest.name).join("\n")}\n\nAdded:\n${added.map(guest => guest.name).join("\n")}`, confirm: "Apply guest changes", apply: () => applyGuests(text, false, parsed.guests.map(guest => guest.id)) });
+      setPending({ title: "Review guest-list changes", description: "These names are treated as removed and added. Seats and preferences for removed guests will be cleared. To rename someone instead, cancel and edit their Name cell in the guest grid.", preview: `Removed:\n${removed.map(guest => guest.name).join("\n")}\n\nAdded:\n${added.map(guest => guest.name).join("\n")}`, confirm: "Apply guest changes", apply: () => applyGuests(text, false, parsed.guests.map(guest => guest.id)) });
       return;
     }
     remember();
@@ -228,7 +245,6 @@ export function App() {
     setSeatPins(replace ? {} : Object.fromEntries(Object.entries(seatPins).filter(([id]) => ids.has(id))));
     setGuestText(text);
     setGuestIds(parsed.guests.map(guest => guest.id));
-    setGuestDraft(text);
     setConstraints(replace ? [] : constraints.filter(constraint => constraintGuestIdsExist(constraint, ids)));
     setActivePlan(replace ? null : activePlan ? reconcilePlanForGuestIds(activePlan, ids) : null);
     setSavedLayouts(replace ? [] : savedLayouts.map(saved => ({
@@ -247,12 +263,9 @@ export function App() {
     const removedPreferences = constraints.filter(constraint => !constraintGuestIdsExist(constraint, ids)).length;
     setNotice(`${parsed.guests.length} guests ready.${replace ? "" : removedPreferences ? ` ${removedPreferences} preferences removed for guests no longer on the list. Undo restores them.` : " Existing guests keep their seats and preferences."}`);
   }
-  function renameGuest(id: string, name: string) {
-    const text = guests.map(guest => formatGuestLine(guest.id === id ? name : guest.name, guest.groups)).join("\n");
-    applyGuests(text, false, guests.map(guest => guest.id));
-  }
   function startEditingGuests() {
-    setGuestDraft(guestText);
+    setGridInitial({ guests, columns });
+    setGridDirty(false);
     setIsEditingGuests(true);
   }
   async function handleSpreadsheetUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -363,15 +376,11 @@ export function App() {
       setImportError(pinIssue);
       return;
     }
-    const nextIssues = tableAssignmentViolations(plan, fixedTables.assignments, guests, layout);
-    if (fixedTables.issues.length || nextIssues.some(issue => !fixedPlanIssues.includes(issue))) {
-      setImportError(fixedTables.issues[0] ?? nextIssues.find(issue => !fixedPlanIssues.includes(issue)) ?? "Check fixed table assignments in Setup.");
-      return;
-    }
     remember();
     setActivePlan(clonePlan(plan));
     setSelectedGuestId("");
     setTargetSeat("");
+    setImportError("");
     setNotice(message);
   }
   function toggleSeatPin(guestId: string, seatId: number) {
@@ -421,13 +430,17 @@ export function App() {
     const apply = () => {
       remember();
       setVenueConfig(next);
-      setColumns(columns.map(column => ({ ...column, tableMapping: Object.fromEntries(Object.entries(column.tableMapping).map(([value, id]) => [value, next.tables.some(table => table.id === id) ? id : null])) })));
+      const nextColumns = columns.map(column => ({ ...column, tableMapping: Object.fromEntries(Object.entries(column.tableMapping).map(([value, id]) => [value, next.tables.some(table => table.id === id) ? id : null])) }));
+      setColumns(nextColumns);
       setSeatPins({});
       setActivePlan(null);
       setSavedLayouts([]);
       setCandidates([]);
       setEditingTables(false);
-      setNotice("Tables updated. Your guests and seating preferences are ready to use.");
+      if (resolveTableAssignments(nextColumns, guests, buildSeatingLayout(next)).missingMappingIssues.length) {
+        setTableChoiceFocus(value => value + 1);
+        setNotice("Tables updated. Next: choose replacement tables for your guest groups below.");
+      } else setNotice("Tables updated. Your guests and seating preferences are ready to use.");
     };
     if (activePlan || savedLayouts.length) {
       setPending({
@@ -468,6 +481,7 @@ export function App() {
         <p>{guests.length} guests for {layout.seatIds.length} seats</p>
       </div>
       <div className="top-actions">
+        <a className="help-link" href="./help.html" target="_blank" rel="noopener" aria-label="Help (opens in a new tab)">Help</a>
         <button type="button" onClick={undo} disabled={!history.length || isShuffling || guestDraftChanged}>Undo</button>
         <button type="button" onClick={handleShare} disabled={!ready || !hasSaveableData || guestDraftChanged || isShuffling || isSharing}>{isSharing ? "Creating link…" : "Share plan"}</button>
         <details className="file-menu" ref={fileMenuRef}>
@@ -542,33 +556,35 @@ export function App() {
         <div className="guest-entry-actions">
           {!isEditingGuests && <button type="button" className={!guests.length ? "primary-button" : ""} onClick={startEditingGuests}>
             <Pencil size={16} />
-            {guests.length ? "Edit names" : "Paste or type names"}
+            {guests.length ? "Edit guests" : "Add or paste guests"}
           </button>}
-          <label className="file-upload-button"><Upload size={16} /> Choose spreadsheet<input aria-label="Choose guest spreadsheet" className="visually-hidden" type="file" accept=".xlsx,.csv,.tsv,text/csv,text/tab-separated-values,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={handleSpreadsheetUpload} disabled={guestDraftChanged} /></label>
+          {!isEditingGuests && <label className="file-upload-button"><Upload size={16} /> Choose spreadsheet<input aria-label="Choose guest spreadsheet" className="visually-hidden" type="file" accept=".xlsx,.csv,.tsv,text/csv,text/tab-separated-values,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={handleSpreadsheetUpload} /></label>}
         </div>
-        <p className="muted-text">CSV or Excel. Read locally; never uploaded.</p>
-        {isEditingGuests ? <div className="guest-editor">
-          <label htmlFor="guest-list">One guest per line</label>
-          <p className="muted-text" id="guest-help">Optional group labels follow a comma, for example “Jane Smith, Family”. Existing names keep their seats when reordered. Replacing a name in a list of the same length renames that guest. For other renames, use the pencil beside a name in View guest list. Use Done to apply your changes.</p>
-          <textarea id="guest-list" aria-label="Guest list" aria-describedby="guest-help" className="guest-input" value={guestDraft} onChange={event => setGuestDraft(event.target.value)} placeholder={"Jane Smith, Family\nSam Jones, Friends\nAlex Lee"} autoFocus />
-          {parseGuestText(guestDraft).warnings.map(warning => <p className="warning-text" key={warning}>{warning}</p>)}
-          <div className="inline-actions">
-            <button type="button" className="primary-button" onClick={() => applyGuests(guestDraft)}>Done</button>
-            <button type="button" onClick={() => setIsEditingGuests(false)}>Cancel</button>
-            {guestDraftChanged && <span className="muted-text">Draft · not applied yet</span>}
-          </div>
-        </div> : guests.length ? <details className="guest-disclosure">
+        <p className="muted-text">CSV, TSV or Excel. Read locally; never uploaded. Use headings such as Name, Household and Department, then choose how each column affects seating in the import preview.</p>
+        <p><a href="./sample-guests.csv" download>Download an example guest spreadsheet</a> · Household: keep together; Department: spread across tables; Friendship group: mix neighbours.</p>
+        {isEditingGuests && gridInitial ? <GuestGridEditor initial={gridInitial} onDirty={() => setGridDirty(true)} onCancel={() => setIsEditingGuests(false)} onApply={data => {
+          applyGuests(guestGridText(data), false, data.guests.map(guest => guest.id));
+          setColumns(data.columns);
+          const resolved = resolveTableAssignments(data.columns, data.guests, layout, seatPins);
+          if (resolved.missingMappingIssues.length) {
+            setTableChoiceFocus(value => value + 1);
+            setNotice("Guest details saved. Next: choose a table for each group below.");
+          }
+        }} /> : guests.length ? <details className="guest-disclosure">
           <summary>View guest list ({guests.length})</summary>
-          <GuestList guests={guests} constraints={validConstraints} onGuestHighlight={setHighlightedGuestId} onRename={renameGuest} />
+          <GuestGridPreview guests={guests} columns={columns} />
         </details> : <p className="muted-text">Just exploring? <button className="text-button" type="button" onClick={() => {
-          applyGuests(PLACEHOLDER_GUESTS, true);
-          setNotice("Example guests added. Use Edit names to replace them with your own.");
+          applyGuests(EXAMPLE_GUESTS.guestText, true);
+          setColumns(EXAMPLE_GUESTS.columns.map(column => ({ ...column, mode: column.label === "Friend group" ? "cluster" : "spread" })));
+          setNotice("Example guests added. Use Edit guests to change names, columns and seating purposes.");
         }}>Try an example with 39 guests</button></p>}
         {importWarnings.map(warning => <p className="warning-text" key={warning}>{warning}</p>)}
         {hasTooManyGuests && <p className="warning-text" role="alert">{guests.length - layout.seatIds.length} more guests than seats. Add seats or remove guests; extra guests will remain unseated.</p>}
       </section>
+      {!isEditingGuests && <TableAssignments columns={columns} guests={guests} layout={layout} seatPins={seatPins} focusRequest={tableChoiceFocus} onChange={updateGuestColumns} />}
+      {!isEditingGuests && <GuestColumnsEditor columns={columns} guests={guests} layout={layout} seatPins={seatPins} disabled={!guests.length || guestDraftChanged} onChange={updateGuestColumns} />}
       <SeatPinsPanel seatPins={seatPins} guestsById={guestsById} layout={layout} onUnpin={removeSeatPin} />
-      {fixedTables.issues.length > 0 && <section className="panel-section fixed-table-issues" role="alert"><h2>Check fixed table assignments</h2><p>Resolve table mappings in Seating preferences → Rules from guest columns, or remove conflicting seat pins above, before generating.</p><ul>{fixedTables.issues.map(issue => <li key={issue}>{issue}</li>)}</ul></section>}
+      {fixedTableConflicts.length > 0 && <section className="panel-section fixed-table-issues" role="alert"><h2>Check fixed table assignments</h2><p>Adjust the table choices above, or remove conflicting seat pins, before generating.</p><ul>{fixedTableConflicts.map(issue => <li key={issue}>{issue}</li>)}</ul></section>}
       <details className="panel-section preferences-disclosure">
         <summary><span className="step-label">Optional</span> Seating preferences <span className="muted-text">{preferenceCount ? `${preferenceCount} added` : "Who should sit near whom?"}</span></summary>
         <p>We’ll try to meet these preferences; some may conflict. You can generate a plan without any.</p>
@@ -577,17 +593,11 @@ export function App() {
           <PairEditor title="Seat near each other" type="prefer_adjacent" showPreference guests={guests} constraints={constraints} onChange={updateConstraints} />
           <PairEditor title="Keep apart" type="avoid_adjacent" guests={guests} constraints={constraints} onChange={updateConstraints} />
           {layout.headSeatIds.length > 0 && <HeadSeatEditor guests={guests} constraints={constraints} onChange={updateConstraints} />}
-          <GuestColumnsEditor columns={columns} guests={guests} layout={layout} onChange={next => {
-            remember();
-            setColumns(next);
-            setCandidates([]);
-            setNotice("Column rules updated. Generate new options to use them.");
-          }} />
         </fieldset>
         <ConstraintAnalysisPanel analysis={constraintAnalysis} guestsById={guestsById} onGuestHighlight={setHighlightedGuestId} />
       </details>
       <div className="setup-next">
-        <p>{guestDraftChanged ? "Use Done to apply your guest list first." : editingTables ? "Use these tables or cancel table changes before generating." : !guests.length ? "Add your guests to generate seating options." : `Ready: ${guests.length} guests · ${layout.seatIds.length} seats`}</p>
+        <p>{isEditingGuests ? "Use Done to apply your guest list first." : fixedTables.missingMappingIssues.length ? "Next: choose tables for your guest groups above." : editingTables ? "Use these tables or cancel table changes before generating." : !guests.length ? "Add your guests to generate seating options." : `Ready: ${guests.length} guests · ${layout.seatIds.length} seats`}</p>
         <button type="button" className="primary-button" onClick={handleShuffle} disabled={!guests.length || isShuffling || guestDraftChanged || editingTables || fixedTables.issues.length > 0}>
           {isShuffling ? <Loader size={18} className="spinning" /> : <Shuffle size={18} />}
           {isShuffling ? "Generating…" : "Generate seating plans"}
@@ -596,7 +606,8 @@ export function App() {
     </main>}
     {phase === "planning" && <main className="planning-workspace">
       <SeatPinsPanel seatPins={seatPins} guestsById={guestsById} layout={layout} onUnpin={removeSeatPin} />
-      {(fixedTables.issues.length > 0 || fixedPlanIssues.length > 0) && <section className="panel-section fixed-table-issues" role="alert"><h2>Fixed table assignments need attention</h2><p>Check the rules in Setup, then generate a new plan or adjust seats.</p><ul>{[...fixedTables.issues, ...fixedPlanIssues].map(issue => <li key={issue}>{issue}</li>)}</ul></section>}
+      {fixedTables.missingMappingIssues.length > 0 && <section className="panel-section"><h2>Choose tables before generating</h2><p>Your guest groups still need table choices.</p><button type="button" onClick={() => { setPhase("setup"); setTableChoiceFocus(value => value + 1); }}>Choose tables</button></section>}
+      {(fixedTableConflicts.length > 0 || fixedPlanIssues.length > 0) && <section className="panel-section fixed-table-issues" role="alert"><h2>Fixed table assignments need attention</h2><p>Check the rules in Setup, then generate a new plan or adjust seats.</p><ul>{[...fixedTableConflicts, ...fixedPlanIssues].map(issue => <li key={issue}>{issue}</li>)}</ul></section>}
       {!activePlan ? <section className="panel-section first-plan">
         <Users size={32} />
         <h2>Your seating plan will appear here</h2>
@@ -624,7 +635,7 @@ export function App() {
           <section className="planner-surface">
             <div className="surface-toolbar">
               <h2>Seating layout</h2>
-              <span className="muted-text">Drag guests to move or swap seats. Use the pin icon to keep a guest in their exact seat.</span>
+              <span className="muted-text">Drag guests to move or swap seats, overriding seating rules. Pinned seats stay protected. Pin your changes to keep them when generating again.</span>
               <button type="button" aria-pressed={roomView} onClick={() => setRoomView(value => !value)}>{roomView ? "Show as vertical list" : "Show as room layout"}</button>
             </div>
             <div className="print-area">
@@ -691,14 +702,15 @@ export function App() {
       }} />
       {!savedLayouts.length && <button type="button" onClick={() => setPhase(activePlan ? "planning" : "setup")}>{activePlan ? "Return to plan to keep a version" : "Start a seating plan"}</button>}
     </main>}
+    {ready && <WelcomeDialog suspended={Boolean(sharedPlan || pending || spreadsheetRows || shareUrl)} />}
     {spreadsheetRows && <SpreadsheetImportDialog rows={spreadsheetRows} onCancel={() => setSpreadsheetRows(null)} onImport={result => {
-      applyGuests(result.guestText, true);
-      setColumns(result.columns);
-      setMixGroups(false);
+      setGridInitial(importedGuestGrid(result, { guests, columns }));
+      setGridDirty(true);
+      setIsEditingGuests(true);
       setSpreadsheetRows(null);
       setImportWarnings(result.warnings);
       setPhase("setup");
-      setNotice(`Imported ${result.importedCount} guests and ${result.columns.length} columns. Choose how to use columns in Seating preferences.`);
+      setNotice(`Review ${result.importedCount} guests and ${result.columns.length} columns in the grid, then choose Done. Cancel keeps your current list.`);
     }} />}
     {shareUrl && <SharePlanDialog url={shareUrl} onClose={() => setShareUrl("")} />}
     {sharedPlan && <ReviewDialog title="Open shared plan?" description={`${parseGuestText(sharedPlan.guestText).guests.length} guests · ${sharedPlan.constraints.length} seating preferences. This replaces your current session, including saved versions. You can undo this change.`} confirm="Open shared plan" onCancel={() => {
@@ -814,45 +826,6 @@ function ConstraintAnalysisPanel({
       </div>;
     })}
   </section>;
-}
-function GuestList({
-  guests,
-  constraints,
-  onGuestHighlight,
-  onRename
-}: {
-  guests: Guest[];
-  constraints: Constraint[];
-  onGuestHighlight: (guestId: string | null) => void;
-  onRename: (guestId: string, name: string) => void;
-}) {
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [name, setName] = useState("");
-  if (guests.length === 0) {
-    return <p className="muted-text">No guests yet. Paste names or choose a spreadsheet to get started.</p>;
-  }
-  const counts = new Map<string, number>();
-  for (const c of constraints) {
-    if (isPairConstraint(c)) {
-      counts.set(c.guestAId, (counts.get(c.guestAId) ?? 0) + 1);
-      counts.set(c.guestBId, (counts.get(c.guestBId) ?? 0) + 1);
-    } else if (isHeadSeatConstraint(c)) {
-      counts.set(c.guestId, (counts.get(c.guestId) ?? 0) + 1);
-    }
-  }
-  const sorted = [...guests].sort((a, b) => a.name.localeCompare(b.name));
-  return <div className="guest-list-view">
-    {sorted.map(guest => {
-      const count = counts.get(guest.id) ?? 0;
-      const badgeTone = count >= 3 ? "high" : count === 2 ? "mid" : "low";
-      return <div className="guest-list-row" key={guest.id}>{editingId === guest.id ? <form className="rename-guest-form" onSubmit={event => { event.preventDefault(); if (!name.trim() || /[,\r\n]/.test(name)) return; onRename(guest.id, name.trim()); setEditingId(null); }}><label>Guest name<input value={name} onChange={event => setName(event.target.value)} autoFocus /></label><button type="submit" disabled={!name.trim() || /[,\r\n]/.test(name)}>Apply name</button><button type="button" onClick={() => setEditingId(null)}>Cancel</button></form> : <><button className="guest-list-name" type="button" onMouseEnter={() => onGuestHighlight(guest.id)} onMouseLeave={() => onGuestHighlight(null)} onFocus={() => onGuestHighlight(guest.id)} onBlur={() => onGuestHighlight(null)}>
-        <span>{guest.name}</span>
-        {count > 0 && <span className={`constraint-badge constraint-badge-${badgeTone}`} title={`${count} constraint${count === 1 ? "" : "s"}`}>
-          {count}
-        </span>}
-      </button><button type="button" className="icon-button" aria-label={`Rename ${guest.name}`} onClick={() => { setEditingId(guest.id); setName(guest.name); }}><Pencil size={14} /></button></>}</div>;
-    })}
-  </div>;
 }
 interface PairEditorProps {
   title: string;
@@ -1267,7 +1240,7 @@ function ScorePanel({
     <HeadSeatResults results={missedHeadSeat} guestsById={guestsById} onGuestHighlight={onGuestHighlight} />
     <details className="scoring-details">
       <summary>Scoring details</summary>
-      <p className="muted-text">Fixed table assignments always apply. Individual preferences come next, then grouping at the same table, then spreading and neighbour mixing. Compare scores with the same guests and settings.</p>
+      <p className="muted-text">When generating, pins take priority over table assignments. Individual preferences come next, then grouping at the same table, then spreading and neighbour mixing. Manual moves override rules but preserve pins. Compare scores with the same guests and settings.</p>
       <div className="metric-grid">
         <Metric label="Preference points" value={String(score.constraintPoints)} />
         {score.columnResults.some(result => result.mode === "cluster") && <Metric label="Same-table column priority" value={score.clusterPoints.toFixed(3)} />}

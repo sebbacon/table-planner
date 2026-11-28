@@ -232,7 +232,7 @@ it.each([1, 17, 99])("keeps exact pinned seats through placement, guided search,
   }
 });
 
-it("supports all seats pinned and rejects duplicate, missing, conflicting, or overcapacity locks", () => {
+it("supports all seats pinned, lets pins override table rules, and rejects invalid or overcapacity locks", () => {
   const layout = buildSeatingLayout({ tables: [1, 2].map(id => ({ id, kind: "circular" as const, seats: 3 })) });
   const guests = Array.from({ length: 6 }, (_, i) => ({ id: `g${i}`, name: `Guest ${i}`, groups: [] }));
   const seatPins = Object.fromEntries(guests.map((guest, i) => [guest.id, layout.seatIds[i]]));
@@ -243,6 +243,11 @@ it("supports all seats pinned and rejects duplicate, missing, conflicting, or ov
   expect(() => generatePlans({ ...options, seatPins: { g0: 999 } })).toThrow("unavailable guest or seat");
   expect(() => generatePlans({ ...options, seatPins: { missing: 1 } })).toThrow("unavailable guest or seat");
   const column = { id: "table", label: "Table", mode: "table" as const, values: { g0: ["A"], g1: ["A"], g2: ["A"], g3: ["A"] }, tableMapping: { A: 2 } };
-  expect(() => generatePlans({ ...options, columns: [column], seatPins: { g0: 1 } })).toThrow("different table");
+  const pinned = generatePlans({ ...options, columns: [column], seatPins: { g0: 1 }, attempts: 5, improveIterations: 100 });
+  expect(pinned.length).toBeGreaterThan(0);
+  for (const candidate of pinned) {
+    expect(candidate.plan.assignments[1]).toBe("g0");
+    for (const id of ["g1", "g2", "g3"]) expect([4, 5, 6].some(seat => candidate.plan.assignments[seat] === id)).toBe(true);
+  }
   expect(() => generatePlans({ ...options, columns: [{ ...column, values: { g0: ["A"], g1: ["A"], g2: ["A"] } }], seatPins: { g3: 4 } })).toThrow("4 fixed guests but only 3 seats");
 });

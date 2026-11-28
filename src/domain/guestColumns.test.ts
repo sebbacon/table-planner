@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { legacyGroupColumn, reconcileColumns, resolveTableAssignments, tableAssignmentViolations } from "./guestColumns";
+import { legacyGroupColumn, organiseLegacyLabels, reconcileColumns, resolveTableAssignments, tableAssignmentViolations } from "./guestColumns";
 import { comparePreferenceScores, scorePlan } from "./scoring";
 import { buildSeatingLayout } from "./seating";
 import type { Guest, GuestColumn, Plan } from "./types";
@@ -68,6 +68,17 @@ describe("column rules", () => {
 });
 
 describe("fixed table assignments", () => {
+  it("gives pins priority over table conflicts and missing mappings, with capacity based on the pinned table", () => {
+    const rule = column({ mode: "table", values: { a: ["X"], b: ["X"], c: ["X"], d: ["X"] }, tableMapping: { X: 0 } });
+    const conflict = column({ id: "other", mode: "table", values: { a: ["Y"] }, tableMapping: { Y: 9 } });
+    const pinned = resolveTableAssignments([rule, conflict], guests, layout, { a: 4 });
+    expect(pinned.issues).toEqual([]);
+    expect([...pinned.assignments.entries()]).toEqual([["b", 0], ["c", 0], ["d", 0], ["a", 9]]);
+    const missing = resolveTableAssignments([{ ...rule, values: { a: ["Pinned only"], b: ["Still needs a table"] }, tableMapping: {} }], guests, layout, { a: 4 });
+    expect(missing.missingMappingIssues).toEqual(["Department: choose a table for “Still needs a table”."]);
+    expect(missing.assignments.get("a")).toBe(9);
+  });
+
   it("resolves table id zero and blank cells, preserving links through a rename", () => {
     const rule = column({ mode: "table", values: { a: ["VIP"], b: [] }, tableMapping: { VIP: 0 } });
     const fixed = resolveTableAssignments([rule], guests, layout);
@@ -102,4 +113,19 @@ it("migrates multiple legacy labels and reconciles imported attributes by stable
   expect(reconciled[0].values).toEqual({ a: ["Friends"], b: [] });
   expect(reconciled[1].values).toEqual({ a: ["X"], b: ["X"] });
   expect(legacyGroupColumn(guests, true)).toEqual([]);
+});
+
+it("moves selected older labels into named columns while retaining unmoved labels and existing column rules", () => {
+  const source: GuestColumn = { id: "groups", label: "Groups", legacyGroups: true, mode: "neighbours", values: { a: ["Family", "Finance"], b: ["School", "Finance"], c: ["Family", "Sales"], d: [] }, tableMapping: { Finance: 1 } };
+  const department = column({ mode: "spread", values: { a: ["Engineering"] } });
+  const original = [source, department];
+  const snapshot = structuredClone(original);
+  const next = organiseLegacyLabels(original, guests, "groups", { Finance: " Department ", School: "Friend group" });
+  expect(next.find(item => item.id === "groups")?.values).toEqual({ a: ["Family"], b: [], c: ["Family", "Sales"], d: [] });
+  expect(next.find(item => item.id === "department")).toMatchObject({ mode: "spread", values: { a: ["Engineering", "Finance"], b: ["Finance"] }, tableMapping: { Finance: 1 } });
+  expect(next.find(item => item.label === "Friend group")).toMatchObject({ mode: "ignore", values: { b: ["School"] } });
+  expect(original).toEqual(snapshot);
+  expect(() => organiseLegacyLabels(original, guests, "groups", { Finance: "Name" })).toThrow(/heading/);
+  expect(() => organiseLegacyLabels(original, guests, "groups", {})).toThrow(/at least one label/);
+  expect(original).toEqual(snapshot);
 });

@@ -6,6 +6,7 @@ import { Blob as NodeBlob } from "node:buffer";
 import { TextEncoder } from "node:util";
 import { deflateSync } from "node:zlib";
 import { App } from "./App";
+import { WELCOME_STORAGE_KEY } from "./WelcomeDialog";
 import { createShareUrl, readShareHash } from "./domain/share";
 import type { PlannerData } from "./domain/backup";
 import { PLANNER_DATA_VERSION } from "./domain/persistence";
@@ -18,6 +19,7 @@ beforeEach(() => {
   vi.stubGlobal("Blob", NodeBlob);
   vi.stubGlobal("TextEncoder", TextEncoder);
   localStorage.clear();
+  localStorage.setItem(WELCOME_STORAGE_KEY, "true");
   window.history.replaceState(null, "", "/table-planner/");
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
   HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
@@ -85,8 +87,8 @@ it("disables sharing until guest-list edits have been applied", async () => {
   const user = userEvent.setup();
   render(<App />);
   expect(screen.getByRole("button", { name: "Share plan" })).toBeDisabled();
-  await user.click(screen.getByRole("button", { name: "Paste or type names" }));
-  fireEvent.change(screen.getByLabelText("Guest list"), { target: { value: "New Guest" } });
+  await user.click(screen.getByRole("button", { name: "Add or paste guests" }));
+  fireEvent.change(screen.getByLabelText("Guest name, row 1"), { target: { value: "New Guest" } });
   expect(screen.getByRole("button", { name: "Share plan" })).toBeDisabled();
   await user.click(screen.getByRole("button", { name: "Done" }));
   expect(screen.getByRole("button", { name: "Share plan" })).toBeEnabled();
